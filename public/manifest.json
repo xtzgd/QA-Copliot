@@ -1,0 +1,53 @@
+{
+  "manifest_version": 3,
+  "minimum_chrome_version": "116",
+  "name": "QA Copilot",
+  "version": "1.0.9",
+  "description": "QA Copilot - Web QA 工程师的智能测试助手，自动记录操作、异常与一键生成高质量 Bug 报告",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "打开 QA Copilot 侧边栏"
+  },
+  "side_panel": {
+    "default_path": "sidepanel/index.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "devtools_page": "devtools.html",
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["injected.js"],
+      "world": "MAIN",
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "tabs",
+    "activeTab",
+    "scripting",
+    "webNavigation",
+    "debugger",
+    "unlimitedStorage",
+    "desktopCapture",
+    "cookies"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ]
+}

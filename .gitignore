@@ -1,0 +1,17 @@
+# JavaScript dependencies
+node_modules/
+**/node_modules/
+
+# Local Midscene source checkout used only for reference
+开源参考项目/midscene/
+
+# Local credentials and certificates
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# OS and test artifacts
+.DS_Store
+coverage/
