@@ -21,6 +21,7 @@ import {
   PlayCircle,
   Send,
   Square,
+  Trash2,
   X,
 } from 'lucide-react';
 import { eventRepo } from '../../db/repositories/eventRepository';
@@ -32,7 +33,7 @@ import { sendToBackground } from '../../shared/messages';
 import { useAppStore } from '../store/useAppStore';
 
 export const TimelinePage: React.FC = () => {
-  const { activeSession, pastSessions, events, setCurrentTab, setToastMessage, activeTask, updateSessionTitle } = useAppStore();
+  const { activeSession, pastSessions, events, setCurrentTab, setToastMessage, activeTask, updateSessionTitle, deleteSession } = useAppStore();
   const [filter, setFilter] = useState<'all' | 'action' | 'api' | 'error'>('all');
   const [viewingPastSessionId, setViewingPastSessionId] = useState<string | null>(null);
   const [pastEvents, setPastEvents] = useState<QAEvent[]>([]);
@@ -519,14 +520,37 @@ export const TimelinePage: React.FC = () => {
                       </div>
                     ) : (
                       <div className="flex items-center gap-1.5 min-w-0">
-                        <span className="font-semibold text-slate-800 truncate">{ps.title}</span>
-                        <button
-                          onClick={(e) => handleStartEdit(e, ps.id, ps.title)}
-                          className="p-1 text-slate-400 opacity-0 group-hover:opacity-100 hover:text-blue-600 rounded transition-all shrink-0"
-                          title="修改会话名称"
-                        >
-                          <Pencil className="w-3 h-3" />
-                        </button>
+                        {(() => {
+                          const displayTitle = (ps.title || '')
+                            .replace(/\s*\((?:商城系统|默认项目)[-_]?(?:TEST|DEV|UAT|PROD)?\)/gi, '')
+                            .trim() || ps.title;
+                          return (
+                            <>
+                              <span className="font-semibold text-slate-800 truncate" title={displayTitle}>
+                                {displayTitle}
+                              </span>
+                              <button
+                                onClick={(e) => handleStartEdit(e, ps.id, displayTitle)}
+                                className="p-1 text-slate-400 opacity-0 group-hover:opacity-100 hover:text-blue-600 rounded transition-all shrink-0 cursor-pointer"
+                                title="修改会话名称"
+                              >
+                                <Pencil className="w-3 h-3" />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (window.confirm(`确定删除历史测试会话「${displayTitle}」及其所有数据吗？`)) {
+                                    deleteSession(ps.id);
+                                  }
+                                }}
+                                className="p-1 text-slate-400 opacity-0 group-hover:opacity-100 hover:text-red-600 rounded transition-all shrink-0 cursor-pointer"
+                                title="删除会话"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </>
+                          );
+                        })()}
                       </div>
                     )}
                     <span className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">

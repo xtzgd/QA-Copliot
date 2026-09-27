@@ -302,5 +302,381 @@ describe('AI Copilot 增强 (E4 - TASK-401 ~ TASK-407)', () => {
     expect(context.actions[1].description).toContain('输入手机号「13812345678」');
     expect(context.actions[2].description).toContain('点击「提交订单」');
   });
+
+  it('planBrowserAction 接收 screenshotUrl 时，构造包含 image_url 的多模态请求', async () => {
+    const { OpenAILlmProviderAdapter } = await import('../src/ai');
+    let capturedBody: any = null;
+
+    const visionFetcher = async (_url: string, init: any) => {
+      capturedBody = JSON.parse(init.body);
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  action: 'tap',
+                  elementId: 'btn-submit',
+                  reason: '视觉定位到提交按钮',
+                }),
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    };
+
+    const adapter = new OpenAILlmProviderAdapter(
+      {
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'sk-test',
+        model: 'gpt-4o',
+      },
+      visionFetcher as any
+    );
+
+    const plan = await adapter.planBrowserAction({
+      instruction: '点击提交按钮',
+      mode: 'act',
+      history: [],
+      observations: [
+        {
+          frameId: 0,
+          frameUrl: 'https://example.com',
+          title: '测试页面',
+          text: '欢迎提交',
+          scrollY: 0,
+          scrollX: 0,
+          elements: [
+            { id: 'btn-submit', tag: 'button', text: '提交', role: 'button' },
+          ],
+        },
+      ],
+      screenshotUrl: 'data:image/jpeg;base64,mockJpegData',
+    });
+
+    expect(plan.action).toBe('tap');
+    expect((plan as any).elementId).toBe('btn-submit');
+    expect(capturedBody).not.toBeNull();
+    const userMsg = capturedBody.messages.find((m: any) => m.role === 'user');
+    expect(Array.isArray(userMsg.content)).toBe(true);
+    expect(userMsg.content.some((c: any) => c.type === 'image_url' && c.image_url.url === 'data:image/jpeg;base64,mockJpegData')).toBe(true);
+    expect(userMsg.content.some((c: any) => c.type === 'text')).toBe(true);
+  });
+
+  it('planBrowserAction 遇到视觉不支持报错时自动降级重试并完成断言', async () => {
+    const { OpenAILlmProviderAdapter } = await import('../src/ai');
+    let attemptCount = 0;
+    const capturedBodies: any[] = [];
+
+    const fallbackFetcher = async (_url: string, init: any) => {
+      attemptCount++;
+      const body = JSON.parse(init.body);
+      capturedBodies.push(body);
+      if (attemptCount === 1) {
+        return new Response(
+          JSON.stringify({
+            error: { message: 'Image input is not supported for this model' },
+          }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  action: 'assertion',
+                  passed: true,
+                  reason: '文本匹配断言通过',
+                }),
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    };
+
+    const adapter = new OpenAILlmProviderAdapter(
+      {
+        baseUrl: 'https://api.deepseek.com/v1',
+        apiKey: 'sk-test',
+        model: 'deepseek-chat',
+      },
+      fallbackFetcher as any
+    );
+
+    const plan = await adapter.planBrowserAction({
+      instruction: '验证提交成功',
+      mode: 'assert',
+      history: [],
+      observations: [
+        {
+          frameId: 0,
+          frameUrl: 'https://example.com',
+          title: '测试页面',
+          text: '操作成功',
+          scrollY: 0,
+          scrollX: 0,
+          elements: [],
+        },
+      ],
+      screenshotUrl: 'data:image/jpeg;base64,mockJpegData',
+    });
+
+    expect(attemptCount).toBe(2);
+    expect(plan.action).toBe('assertion');
+    expect((plan as any).passed).toBe(true);
+    expect(typeof capturedBodies[1].messages.find((m: any) => m.role === 'user').content).toBe('string');
+  });
+
+  it('extractJsonFromLlmResponse 能正确规避后附文本括号干扰、多对象并发、think 标签与微语法瑕疵', async () => {
+    const { extractJsonFromLlmResponse } = await import('../src/ai');
+
+    // 1. 用户现场出现的典型报错情境：JSON 后面跟着带有花括号的说明文本
+    const rawWithBracesSuffix = `{"action":"finished","reason":"已根据可见页面状态完成全部表单项的填写，表单无更多未填写项"}
+如果需要提交，请点击【提交】按钮。{操作提示：无需继续操作}`;
+    const parsed1 = extractJsonFromLlmResponse<any>(rawWithBracesSuffix);
+    expect(parsed1.action).toBe('finished');
+    expect(parsed1.reason).toContain('已根据可见页面状态完成全部表单项的填写');
+
+    // 2. 模型一次输出了两个动作对象
+    const rawMultipleObjects = `{"action":"input","elementId":"elem-3","value":"张三","reason":"填写姓名"}
+{"action":"tap","elementId":"elem-5","reason":"点击提交"}`;
+    const parsed2 = extractJsonFromLlmResponse<any>(rawMultipleObjects);
+    expect(parsed2.action).toBe('input');
+    expect(parsed2.elementId).toBe('elem-3');
+    expect(parsed2.value).toBe('张三');
+
+    // 3. 模型输出了思考链标签 + 代码块 + 尾部多余逗号与注释
+    const rawThinkWithCodeBlock = `<think>
+用户想要填写表单，本轮进行第 4 步...
+{临时分析}
+</think>
+\`\`\`json
+{
+  // 核心动作
+  "action": "finished",
+  "reason": "所有必填输入框已填满",
+}
+\`\`\`
+已全部完成。`;
+    const parsed3 = extractJsonFromLlmResponse<any>(rawThinkWithCodeBlock);
+    expect(parsed3.action).toBe('finished');
+    expect(parsed3.reason).toBe('所有必填输入框已填满');
+  });
+
+  it('planBrowserAction 遇到模型返回数组形式的动作列表时能够平滑提取首个动作', async () => {
+    const { OpenAILlmProviderAdapter } = await import('../src/ai');
+
+    const arrayFetcher = async () => {
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify([
+                  { action: 'input', elementId: 'elem-field-1', value: '测试数据', reason: '填写第一个输入框' },
+                  { action: 'tap', elementId: 'btn-next', reason: '点击下一步' },
+                ]),
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    };
+
+    const adapter = new OpenAILlmProviderAdapter(
+      { baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-test', model: 'gpt-4o' },
+      arrayFetcher as any
+    );
+
+    const plan = await adapter.planBrowserAction({
+      instruction: '填写当前表单',
+      mode: 'act',
+      history: [],
+      observations: [
+        {
+          frameId: 0,
+          frameUrl: 'https://example.com',
+          title: '表单',
+          text: '姓名：',
+          scrollY: 0,
+          scrollX: 0,
+          elements: [
+            { id: 'elem-field-1', tag: 'input', role: 'textbox', name: 'name', text: '' },
+          ],
+        },
+      ],
+    });
+
+    expect(plan.action).toBe('input');
+    expect((plan as any).elementId).toBe('elem-field-1');
+    expect((plan as any).value).toBe('测试数据');
+  });
+
+  it('extractJsonFromLlmResponse 能够自愈因中途截断未闭合的 JSON（解决 Unexpected end of JSON input）', async () => {
+    const { extractJsonFromLlmResponse } = await import('../src/ai');
+
+    // 缺少右花括号
+    const truncated1 = '{"action":"input","elementId":"elem-3","value":"张三"';
+    const parsed1 = extractJsonFromLlmResponse<any>(truncated1);
+    expect(parsed1.action).toBe('input');
+    expect(parsed1.value).toBe('张三');
+
+    // 缺少右引号与花括号
+    const truncated2 = '{"action":"finished","reason":"已填完所有内容';
+    const parsed2 = extractJsonFromLlmResponse<any>(truncated2);
+    expect(parsed2.action).toBe('finished');
+    expect(parsed2.reason).toBe('已填完所有内容');
+
+    // Markdown 代码块开门但中途被截断未关门
+    const truncated3 = '```json\n{"action":"tap","elementId":"btn-submit"';
+    const parsed3 = extractJsonFromLlmResponse<any>(truncated3);
+    expect(parsed3.action).toBe('tap');
+    expect(parsed3.elementId).toBe('btn-submit');
+  });
+
+  it('chatCompletion 在 content 为空时能够从推理模型的 reasoning_content 中回退提取动作', async () => {
+    const { OpenAILlmProviderAdapter } = await import('../src/ai');
+
+    const reasoningFetcher = async () => {
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: '', // content 为空
+                reasoning_content: '我分析了当前页面，决定点击提交。\n```json\n{"action":"tap","elementId":"btn-1"}\n```',
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    };
+
+    const adapter = new OpenAILlmProviderAdapter(
+      { baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-test', model: 'deepseek-r1' },
+      reasoningFetcher as any
+    );
+
+    const plan = await adapter.planBrowserAction({
+      instruction: '点击按钮',
+      mode: 'act',
+      history: [],
+      observations: [
+        {
+          frameId: 0,
+          frameUrl: 'https://example.com',
+          title: '测试',
+          text: '',
+          scrollY: 0,
+          scrollX: 0,
+          elements: [{ id: 'btn-1', tag: 'button', text: '提交' }],
+        },
+      ],
+    });
+
+    expect(plan.action).toBe('tap');
+    expect((plan as any).elementId).toBe('btn-1');
+  });
+
+  it('extractBrowserPlanFromRawText 能够从包含未转义内部引号或混杂文本中稳健提取动作', async () => {
+    const { extractBrowserPlanFromRawText } = await import('../src/ai');
+
+    const rawWithInnerQuotes = `The user wants to add user.
+    {
+      "action": "tap",
+      "elementId": "0:el-12",
+      "reason": "Click the "新增" button to open modal"
+    }`;
+
+    const plan = extractBrowserPlanFromRawText(rawWithInnerQuotes);
+    expect(plan).not.toBeNull();
+    expect(plan?.action).toBe('tap');
+    expect((plan as any)?.elementId).toBe('0:el-12');
+  });
+
+  it('inferPlanFromNaturalText 能够从大模型纯自然语言对话（如 "The user wants to add a new user... I need to click the "新增" button"）中救活并提取动作意图', async () => {
+    const { inferPlanFromNaturalText } = await import('../src/ai');
+
+    const rawNaturalResponse = 'The user wants to add a new user with all fields required. I need to click the "新增" button. Looking ';
+    const context = {
+      instruction: '新增个用户 字段都必填',
+      mode: 'act' as const,
+      history: [],
+      observations: [
+        {
+          frameId: 0,
+          frameUrl: 'https://example.com/system/user',
+          title: '用户管理',
+          text: '',
+          scrollY: 0,
+          scrollX: 0,
+          elements: [
+            { id: '0:el-5', tag: 'input', name: '用户名称' } as any,
+            { id: '0:el-12', tag: 'button', role: 'button', name: '+ 新增', text: '新增' } as any,
+          ],
+        },
+      ],
+    };
+
+    const plan = inferPlanFromNaturalText(rawNaturalResponse, context);
+    expect(plan).not.toBeNull();
+    expect(plan?.action).toBe('tap');
+    expect((plan as any)?.elementId).toBe('0:el-12');
+  });
+
+  it('planBrowserAction 遇到纯英文/自然语言解释型回复时不崩溃并能成功继续执行', async () => {
+    const { OpenAILlmProviderAdapter } = await import('../src/ai');
+
+    const conversationalFetcher = async () => {
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: 'The user wants to add a new user with all fields required. I need to click the "新增" button. Looking at the UI, the button is ready.',
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    };
+
+    const adapter = new OpenAILlmProviderAdapter(
+      { baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-test', model: 'vision-model' },
+      conversationalFetcher as any
+    );
+
+    const plan = await adapter.planBrowserAction({
+      instruction: '新增个用户 字段都必填',
+      mode: 'act',
+      history: [],
+      observations: [
+        {
+          frameId: 0,
+          frameUrl: 'https://example.com',
+          title: '用户管理',
+          text: '',
+          scrollY: 0,
+          scrollX: 0,
+          elements: [
+            { id: '0:el-1', tag: 'input', name: '用户名称' } as any,
+            { id: '0:el-2', tag: 'button', role: 'button', name: '+ 新增', text: '新增' } as any,
+          ],
+        },
+      ],
+    });
+
+    expect(plan.action).toBe('tap');
+    expect((plan as any).elementId).toBe('0:el-2');
+  });
 });
 

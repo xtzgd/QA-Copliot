@@ -122,13 +122,20 @@ async function stopInspectionInTab(tabId: number): Promise<void> {
 }
 
 async function stopReplayInTab(tabId: number): Promise<void> {
-  await cdpInputSession.detach();
+  await cdpInputSession.detach().catch(() => {});
   try {
-    const frames = await chrome.webNavigation.getAllFrames({ tabId });
-    await Promise.all((frames || [{ frameId: 0 }]).map(({ frameId }) =>
-      chrome.tabs.sendMessage(tabId, { type: 'STOP_CONTENT_REPLAY' }, { frameId }).catch(() => {})
-    ));
+    const frames = typeof chrome !== 'undefined' && typeof chrome.webNavigation?.getAllFrames === 'function'
+      ? await chrome.webNavigation.getAllFrames({ tabId }).catch(() => null)
+      : null;
+    if (frames && frames.length > 0) {
+      await Promise.all(frames.map(({ frameId }) =>
+        chrome.tabs.sendMessage(tabId, { type: 'STOP_CONTENT_REPLAY' }, { frameId }).catch(() => {})
+      ));
+    }
   } catch {}
+  if (typeof chrome !== 'undefined' && typeof chrome.tabs?.sendMessage === 'function') {
+    await chrome.tabs.sendMessage(tabId, { type: 'STOP_CONTENT_REPLAY' }).catch(() => {});
+  }
 }
 
 function validateRunSuite(suite: ImportedTestSuite): string | null {
@@ -203,7 +210,7 @@ async function collectAgentObservations(tabId: number): Promise<WebFrameObservat
         text: (result.text || '').slice(0, 4_000),
         scrollY: Number(result.scrollY || 0),
         scrollX: Number(result.scrollX || 0),
-        elements: (result.elements || []).slice(0, 40).map((element) => ({
+        elements: (result.elements || []).slice(0, 100).map((element) => ({
           ...element,
           id: `${frame.frameId}:${element.id}`,
         })),
@@ -214,9 +221,9 @@ async function collectAgentObservations(tabId: number): Promise<WebFrameObservat
   }));
   const found = observations.filter((item): item is WebFrameObservation => Boolean(item));
   if (found.length === 0) throw new Error('无法读取当前页面，请确认页面已加载且允许 QA Copilot 注入脚本');
-  let remainingElements = 100;
+  let remainingElements = 150;
   return found.map((frame) => {
-    const elements = frame.elements.slice(0, Math.min(40, remainingElements));
+    const elements = frame.elements.slice(0, Math.min(100, remainingElements));
     remainingElements -= elements.length;
     return { ...frame, elements };
   });
@@ -249,11 +256,14 @@ function createAgentEvent(
     };
   }
   if (!target) throw new Error('AI 选择了本轮页面观察中不存在的控件');
+  const obsId = target.id.replace(/^\d+:/, '');
   if (action.action === 'tap') {
     return {
       id, sessionId: '', type: 'click', timestamp, title: `点击 ${target.name || target.text || target.tag}`, description: `点击 ${target.name || target.text || target.tag}`, url: pageUrl,
       payload: {
         ...basePayload,
+        id: obsId,
+        obsId,
         tag: target.tag.toUpperCase(), text: target.text || target.name || '', role: target.role,
         name: target.name, testId: target.testId, ariaLabel: target.ariaLabel,
         selector: target.selector,
@@ -273,6 +283,8 @@ function createAgentEvent(
     id, sessionId: '', type: 'input', timestamp, title: `填写 ${target.name || target.placeholder || target.tag}`, description: `填写 ${target.name || target.placeholder || target.tag}`, url: pageUrl,
     payload: {
       ...basePayload,
+      id: obsId,
+      obsId,
       tag: target.tag.toUpperCase(), name: target.name, fieldName: target.name,
       fieldLabel: target.name, placeholder: target.placeholder, inputType: target.inputType,
       selector: target.selector, value,
@@ -329,15 +341,37 @@ async function executeAiInstruction(
       detail: assertMode ? `第 ${turn + 1} 轮：正在读取页面并准备断言` : `第 ${turn + 1} 轮：正在读取页面状态`,
     });
     const observations = await collectAgentObservations(tabId);
+    let screenshotUrl: string | undefined;
+    try {
+      const storage = typeof chrome !== 'undefined' && chrome.storage?.local
+        ? await chrome.storage.local.get('aiVisionEnabled')
+        : {};
+      const aiVisionEnabled = storage.aiVisionEnabled !== false;
+      if (aiVisionEnabled && typeof chrome !== 'undefined' && typeof chrome.tabs?.get === 'function' && typeof chrome.tabs?.captureVisibleTab === 'function') {
+        const tab = await chrome.tabs.get(tabId);
+        if (tab?.windowId) {
+          screenshotUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
+            format: 'jpeg',
+            quality: 75,
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[QA Copilot Agent] 视口截图采集跳过，继续纯 DOM 模式:', e);
+    }
+
     taskCoordinator.updateStep(runId, stepIndex, {
       status: 'running',
-      detail: assertMode ? `第 ${turn + 1} 轮：页面已读取，正在请求 AI 核对` : `第 ${turn + 1} 轮：页面已读取，等待 AI 规划动作（单次请求最多 35 秒）`,
+      detail: assertMode
+        ? `第 ${turn + 1} 轮：页面${screenshotUrl ? '与视口画面' : ''}已读取，正在请求 AI 核对断言`
+        : `第 ${turn + 1} 轮：页面${screenshotUrl ? '与视口画面' : ''}已读取，等待 AI 规划动作（单次请求最多 35 秒）`,
     });
     const plan = await aiProviderService.planBrowserAction({
       instruction,
       observations,
       history,
       mode: assertMode ? 'assert' : 'act',
+      screenshotUrl,
     });
     if (activeAgentRunId !== runId) throw new Error('任务已取消');
     if (plan.action === 'assertion') {
@@ -373,7 +407,10 @@ async function executeAiInstruction(
     history.push(actionSummary);
     actionsSent = true;
     taskCoordinator.updateStep(runId, stepIndex, { detail: `已${actionSummary}，等待页面更新后重新观察`, actionSent: true });
-    await waitForAgentDelay(runId, 250);
+    // 弹窗与页面渲染缓冲：若动作涉及新增、打开、点击等可能触发弹窗动画或异步加载的操作，给予充足的动画完成与 DOM 挂载等待时间
+    const isTriggerAction = /新增|添加|创建|打开|查看|编辑|弹窗|modal|dialog|drawer|button|tab|click/i.test(actionSummary);
+    const waitMs = isTriggerAction ? 700 : 400;
+    await waitForAgentDelay(runId, waitMs);
   }
 }
 
@@ -661,7 +698,11 @@ export async function handleMessage(
     }
 
     case 'STOP_REPLAY': {
-      const targetTabId = taskCoordinator.getActiveTask()?.target.tabId;
+      let targetTabId = taskCoordinator.getActiveTask()?.target.tabId;
+      if (targetTabId === undefined && typeof chrome !== 'undefined' && typeof chrome.tabs?.query === 'function') {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => []);
+        targetTabId = tabs[0]?.id;
+      }
       if (activeReplayId) {
         taskCoordinator.finishTask(activeReplayId, 'cancelled', '停止回放');
       }
@@ -1131,12 +1172,13 @@ export async function handleMessage(
       }
       const currentUrl = activeTab?.url || 'https://unknown-page';
 
-      const chromeVersion = navigator.userAgent.match(/(?:Chrome|Chromium)\/([\d.]+)/)?.[1] || '未知';
+      const ua = typeof navigator !== 'undefined' ? navigator.userAgent : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+      const chromeVersion = ua.match(/(?:Chrome|Chromium)\/([\d.]+)/)?.[1] || '未知';
       const browserInfo: BrowserContextInfo = {
-        userAgent: navigator.userAgent,
+        userAgent: ua,
         browserName: 'Chrome',
         browserVersion: chromeVersion,
-        os: navigator.platform || 'macOS',
+        os: typeof navigator !== 'undefined' ? navigator.platform || 'macOS' : 'Windows',
         viewport: {
           width: activeTab?.width || 1920,
           height: activeTab?.height || 1080,
@@ -1768,8 +1810,9 @@ async function navigateReplayTab(tabId: number, url: string): Promise<void> {
 
 async function waitForTabNavigationComplete(tabId: number, settleDelayMs = 0): Promise<boolean> {
   if (settleDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, settleDelayMs));
-  const tab = await chrome.tabs.get(tabId);
-  if (tab.status !== 'loading') return false;
+  if (typeof chrome !== 'undefined' && typeof chrome.tabs?.get !== 'function') return false;
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tab || tab.status !== 'loading') return false;
 
   await new Promise<void>((resolve, reject) => {
     let finished = false;

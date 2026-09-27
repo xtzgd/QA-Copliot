@@ -347,4 +347,230 @@ describe('IMP-10 填写模板存储与动态特征匹配', () => {
     // 无关字段不被错误匹配
     expect(matchedAssignments.some((a) => a.fieldId === 'field_snap_2026_4_unrelated')).toBe(false);
   });
+
+  it('从已录入表单字段提取生成填写模板：自动过滤空白项/未选占位符，保留有效输入值', () => {
+    // 模拟用户在网页上已录入部分字段的表单快照
+    const liveFields: FormFieldItem[] = [
+      {
+        fieldId: 'field_1_username',
+        formId: 'form_user',
+        tag: 'input',
+        kind: 'text',
+        name: 'userName',
+        label: '用户昵称',
+        currentValue: '测试工程师小王',
+        isEmpty: false,
+        disabled: false,
+        readOnly: false,
+        isVisible: true,
+      },
+      {
+        fieldId: 'field_2_department',
+        formId: 'form_user',
+        tag: 'select',
+        kind: 'select',
+        name: 'deptId',
+        label: '归属部门',
+        currentValue: '研发部门',
+        isEmpty: false,
+        disabled: false,
+        readOnly: false,
+        isVisible: true,
+        options: [
+          { optionId: 'opt_1', value: '100', label: '研发部门' },
+          { optionId: 'opt_2', value: '101', label: '财务部门' },
+        ],
+      },
+      {
+        fieldId: 'field_3_empty_remark',
+        formId: 'form_user',
+        tag: 'textarea',
+        kind: 'text',
+        name: 'remark',
+        label: '备注说明',
+        currentValue: '', // 空白项
+        isEmpty: true,
+        disabled: false,
+        readOnly: false,
+        isVisible: true,
+      },
+      {
+        fieldId: 'field_4_unselected_type',
+        formId: 'form_user',
+        tag: 'select',
+        kind: 'select',
+        name: 'type',
+        label: '用户类型',
+        currentValue: '请选择', // 默认占位符
+        isEmpty: false,
+        disabled: false,
+        readOnly: false,
+        isVisible: true,
+      },
+      {
+        fieldId: 'field_5_gender',
+        formId: 'form_user',
+        tag: 'input',
+        kind: 'radio',
+        name: 'sex',
+        label: '用户性别',
+        currentValue: '男',
+        isEmpty: false,
+        disabled: false,
+        readOnly: false,
+        isVisible: true,
+      },
+      {
+        fieldId: 'field_6_disabled_id',
+        formId: 'form_user',
+        tag: 'input',
+        kind: 'text',
+        name: 'userId',
+        label: '用户ID',
+        currentValue: '99999',
+        isEmpty: false,
+        disabled: true, // 禁用字段不应保存为可写模板
+        readOnly: false,
+        isVisible: true,
+      },
+    ];
+
+    // 提取有效录入字段逻辑
+    const extractedFields = liveFields.filter((f) => {
+      if (f.disabled || f.readOnly || f.kind === 'unsupported') return false;
+      if (f.currentValue === null || f.currentValue === undefined) return false;
+      if (typeof f.currentValue === 'string') {
+        const trimmed = f.currentValue.trim();
+        if (!trimmed || trimmed === '请选择' || trimmed === '--请选择--') return false;
+      }
+      return true;
+    });
+
+    expect(extractedFields.length).toBe(3);
+    expect(extractedFields.map((f) => f.label)).toEqual(['用户昵称', '归属部门', '用户性别']);
+
+    // 生成模板
+    const tpl: FormFillTemplate = {
+      id: 'tpl_auto_extracted',
+      name: '标准测试用户模板',
+      urlPattern: 'https://example.com/system/user',
+      rules: extractedFields.map((f) => ({
+        labelPattern: f.label,
+        fieldName: f.name || f.fieldId.split('_').slice(3).join('_'),
+        kind: f.kind,
+        value: f.currentValue,
+        action: f.kind === 'select' ? 'select' : f.kind === 'checkbox' || f.kind === 'radio' ? 'check' : 'fill',
+      })),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    expect(tpl.rules).toHaveLength(3);
+    expect(tpl.rules[0]).toMatchObject({ labelPattern: '用户昵称', fieldName: 'userName', value: '测试工程师小王', action: 'fill' });
+    expect(tpl.rules[1]).toMatchObject({ labelPattern: '归属部门', fieldName: 'deptId', value: '研发部门', action: 'select' });
+    expect(tpl.rules[2]).toMatchObject({ labelPattern: '用户性别', fieldName: 'sex', value: '男', action: 'check' });
+  });
+
+  it('模板一键秒填：精准解析下拉选项 optionId 及模糊匹配文本', () => {
+    const template: FormFillTemplate = {
+      id: 'tpl_quick',
+      name: '极速填表模板',
+      rules: [
+        { labelPattern: '部门', fieldName: 'dept', value: '研发部', action: 'select' },
+        { labelPattern: '角色', fieldName: 'role', value: '管理员', action: 'select' },
+      ],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    const targetFields: FormFieldItem[] = [
+      {
+        fieldId: 'field_page_dept',
+        formId: 'form_1',
+        tag: 'select',
+        kind: 'select',
+        name: 'dept',
+        label: '归属部门 *',
+        currentValue: '',
+        isEmpty: true,
+        disabled: false,
+        readOnly: false,
+        isVisible: true,
+        options: [
+          { optionId: 'opt_dept_1', value: 'dept_dev', label: '研发部门' }, // 包含 "研发部"
+          { optionId: 'opt_dept_2', value: 'dept_sales', label: '销售部' },
+        ],
+      },
+      {
+        fieldId: 'field_page_role',
+        formId: 'form_1',
+        tag: 'select',
+        kind: 'select',
+        name: 'role',
+        label: '系统角色',
+        currentValue: '',
+        isEmpty: true,
+        disabled: false,
+        readOnly: false,
+        isVisible: true,
+        options: [
+          { optionId: 'opt_role_admin', value: 'admin', label: '超级管理员' }, // 包含 "管理员"
+          { optionId: 'opt_role_guest', value: 'guest', label: '访客' },
+        ],
+      },
+    ];
+
+    const quickAssignments: any[] = [];
+    const matchedFieldIds = new Set<string>();
+
+    for (const rule of template.rules) {
+      const matched = targetFields.find((f) => {
+        if (matchedFieldIds.has(f.fieldId)) return false;
+        if (f.disabled || f.readOnly || f.kind === 'unsupported') return false;
+        if (rule.fieldName && f.name && rule.fieldName === f.name) return true;
+        const rl = rule.labelPattern.trim().toLowerCase();
+        const fl = f.label.trim().toLowerCase();
+        if (rl === fl || (rl.length >= 2 && (fl.includes(rl) || rl.includes(fl)))) return true;
+        return false;
+      });
+
+      if (matched) {
+        matchedFieldIds.add(matched.fieldId);
+        let optionIds: string[] | undefined;
+        if (matched.options && matched.options.length > 0) {
+          const valStr = String(rule.value).trim();
+          const opt = matched.options.find(
+            (o) =>
+              o.value === valStr ||
+              o.label?.trim() === valStr ||
+              o.optionId === valStr ||
+              (o.label && (o.label.trim().includes(valStr) || valStr.includes(o.label.trim())))
+          );
+          if (opt) {
+            optionIds = [opt.optionId];
+          }
+        }
+        quickAssignments.push({
+          fieldId: matched.fieldId,
+          value: rule.value,
+          optionIds,
+          action: rule.action,
+        });
+      }
+    }
+
+    expect(quickAssignments).toHaveLength(2);
+    expect(quickAssignments[0]).toMatchObject({
+      fieldId: 'field_page_dept',
+      value: '研发部',
+      optionIds: ['opt_dept_1'],
+      action: 'select',
+    });
+    expect(quickAssignments[1]).toMatchObject({
+      fieldId: 'field_page_role',
+      value: '管理员',
+      optionIds: ['opt_role_admin'],
+      action: 'select',
+    });
+  });
 });

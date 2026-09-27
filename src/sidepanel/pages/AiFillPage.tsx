@@ -5,6 +5,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   AlertCircle,
+  Bookmark,
   BookmarkPlus,
   CheckCircle2,
   ChevronDown,
@@ -41,6 +42,7 @@ import { aiProviderService } from '../../ai';
 import { formFillRunRepo } from '../../db/repositories/formFillRunRepository';
 import { formFillTemplateRepo } from '../../db/repositories/formFillTemplateRepository';
 import { formFillHistoryRepo } from '../../db/repositories/formFillHistoryRepository';
+import { matchTemplateField } from '../../shared/utils/formTemplateMatching';
 import { useAppStore } from '../store/useAppStore';
 
 interface EditableAssignment extends FormFillAssignment {
@@ -62,6 +64,8 @@ export const AiFillPage: React.FC = () => {
 
   const [templates, setTemplates] = useState<FormFillTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
+  const [isTemplatesExpanded, setIsTemplatesExpanded] = useState(true);
+  const [isQuickFillingTemplateId, setIsQuickFillingTemplateId] = useState<string | null>(null);
 
   const [histories, setHistories] = useState<FormFillHistoryRecord[]>([]);
   const [isHistoryExpanded, setIsHistoryExpanded] = useState(true);
@@ -151,6 +155,21 @@ export const AiFillPage: React.FC = () => {
     if (selectedFormId === 'all') return snapshot.fields;
     return snapshot.fields.filter((f) => f.formId === selectedFormId);
   }, [snapshot, selectedFormId]);
+
+  // 当前表单中已录入非空有效值的字段数
+  const filledCount = React.useMemo(() => {
+    return currentFields.filter(
+      (f) =>
+        !f.disabled &&
+        !f.readOnly &&
+        f.kind !== 'unsupported' &&
+        f.currentValue !== null &&
+        f.currentValue !== undefined &&
+        String(f.currentValue).trim() !== '' &&
+        String(f.currentValue).trim() !== '请选择' &&
+        String(f.currentValue).trim() !== '--请选择--'
+    ).length;
+  }, [currentFields]);
 
   // 2. 生成填表计划
   const handleGeneratePlan = async () => {
@@ -566,10 +585,25 @@ export const AiFillPage: React.FC = () => {
 
       if (matchedRule) {
         matchedCount++;
+        let optionIds: string[] | undefined;
+        if (field.options && field.options.length > 0) {
+          const valStr = String(matchedRule.value).trim();
+          const opt = field.options.find(
+            (o) =>
+              o.value === valStr ||
+              o.label?.trim() === valStr ||
+              o.optionId === valStr ||
+              (o.label && (o.label.trim().includes(valStr) || valStr.includes(o.label.trim())))
+          );
+          if (opt) {
+            optionIds = [opt.optionId];
+          }
+        }
         newAssignments.push({
           fieldId: field.fieldId,
           action: matchedRule.action || (field.kind === 'select' ? 'select' : field.kind === 'checkbox' || field.kind === 'radio' ? 'check' : 'fill'),
           value: matchedRule.value,
+          optionIds,
           source: 'instruction',
           reason: `匹配模板 [${tpl.name}] 规则`,
           expectedBeforeValue: field.currentValue,
@@ -621,7 +655,192 @@ export const AiFillPage: React.FC = () => {
     const updated = await formFillTemplateRepo.listAll();
     setTemplates(updated);
     setSelectedTemplateId(tpl.id);
+    setIsTemplatesExpanded(true);
     setToastMessage(`模板 [${tpl.name}] 已成功保存！后续同类表单可一键复用`);
+  };
+
+  // 8. 识别当前表单并直接提取已录入字段保存为模板 (支持在页面手动输入后直接提取固化为模板)
+  const handleExtractFormAsTemplate = async () => {
+    setIsScanning(true);
+    const scanRes = await sendToBackground<ScanFormSnapshotResponse>({
+      type: 'SCAN_FORM_SNAPSHOT',
+      payload: undefined,
+    });
+    setIsScanning(false);
+    if (!scanRes || scanRes.error || !scanRes.snapshot) {
+      setToastMessage(scanRes?.error || '未找到活动页面，请刷新被测网页后重试');
+      return;
+    }
+    const activeSnap = scanRes.snapshot;
+    setSnapshot(activeSnap);
+
+    const targetFields = selectedFormId === 'all'
+      ? activeSnap.fields
+      : activeSnap.fields.filter((f) => f.formId === selectedFormId);
+
+    const fieldsToExtract = targetFields.filter((f) => {
+      if (f.disabled || f.readOnly || f.kind === 'unsupported') return false;
+      if (f.currentValue === null || f.currentValue === undefined) return false;
+      if (typeof f.currentValue === 'string') {
+        const trimmed = f.currentValue.trim();
+        if (!trimmed || trimmed === '请选择' || trimmed === '--请选择--') return false;
+      }
+      return true;
+    });
+
+    if (fieldsToExtract.length === 0) {
+      setToastMessage('当前表单尚未检测到已录入的有效字段，请先在页面上填写部分字段后提取');
+      return;
+    }
+
+    const currentForm = activeSnap.forms.find((f) => f.formId === selectedFormId);
+    const formTitle = currentForm?.title || activeSnap.title || '常用表单';
+    const defaultName = `${formTitle}模板 (${fieldsToExtract.length}项)`;
+
+    const name = window.prompt(`检测到 ${fieldsToExtract.length} 项已录入字段，请输入模板名称：`, defaultName);
+    if (!name || !name.trim()) return;
+
+    const tpl: FormFillTemplate = {
+      id: `tpl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      name: name.trim(),
+      urlPattern: activeSnap.url || '',
+      rules: fieldsToExtract.map((f) => ({
+        labelPattern: f.label,
+        fieldName: f.name || f.fieldId.split('_').slice(3).join('_'),
+        kind: f.kind,
+        value: f.currentValue,
+        action: f.kind === 'select' ? 'select' : f.kind === 'checkbox' || f.kind === 'radio' ? 'check' : 'fill',
+      })),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    await formFillTemplateRepo.save(tpl);
+    const updated = await formFillTemplateRepo.listAll();
+    setTemplates(updated);
+    setSelectedTemplateId(tpl.id);
+    setIsTemplatesExpanded(true);
+    setToastMessage(`🎉 成功识别并提取 ${fieldsToExtract.length} 项已录入字段，保存为模板 [${tpl.name}]！后续可随时一键直接填充`);
+  };
+
+  // 9. 模板一键填充 (无需手动生成方案或逐项确认，直接极速写入当前页面并回读校验)
+  const handleQuickFillTemplate = async (template: FormFillTemplate) => {
+    setIsQuickFillingTemplateId(template.id);
+    try {
+      // 1. 优先实时扫描当前网页（确保拿到真实 DOM 最新的 fieldId 及选项数据）
+      setIsScanning(true);
+      const scanRes = await sendToBackground<ScanFormSnapshotResponse>({
+        type: 'SCAN_FORM_SNAPSHOT',
+        payload: undefined,
+      });
+      setIsScanning(false);
+
+      const activeSnap = scanRes?.snapshot;
+      if (!activeSnap) {
+        setToastMessage(scanRes?.error || '未找到活动页面，请刷新被测网页后重试');
+        return;
+      }
+      setSnapshot(activeSnap);
+
+      const targetFields = activeSnap.fields;
+      if (targetFields.length === 0) {
+        setToastMessage('当前页面未检测到可填充的表单字段');
+        return;
+      }
+
+      const quickAssignments: FormFillAssignment[] = [];
+      const matchedFieldIds = new Set<string>();
+
+      for (const rule of template.rules) {
+        const matched = matchTemplateField(rule, targetFields, matchedFieldIds);
+
+        if (matched) {
+          matchedFieldIds.add(matched.fieldId);
+          let optionIds: string[] | undefined;
+          if (matched.options && matched.options.length > 0) {
+            const valStr = String(rule.value).trim();
+            const opt = matched.options.find(
+              (o) => o.value === valStr || o.label?.trim() === valStr || o.optionId === valStr
+            );
+            if (opt) {
+              optionIds = [opt.optionId];
+            }
+          }
+
+          quickAssignments.push({
+            fieldId: matched.fieldId,
+            action: rule.action || (matched.kind === 'select' ? 'select' : matched.kind === 'checkbox' || matched.kind === 'radio' ? 'check' : 'fill'),
+            value: rule.value,
+            optionIds,
+            source: 'instruction',
+            reason: `来自模板 [${template.name}]`,
+            expectedBeforeValue: matched.currentValue,
+            wasEmpty: matched.isEmpty,
+          });
+        }
+      }
+
+      if (quickAssignments.length === 0) {
+        setToastMessage(`当前页面未找到与模板 [${template.name}] 匹配的可用字段`);
+        return;
+      }
+
+      const currentRunId = `run_tpl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      setExecutingRunId(currentRunId);
+      setIsExecuting(true);
+
+      const res = await sendToBackground<ExecuteFormFillResponse>({
+        type: 'EXECUTE_FORM_FILL',
+        payload: {
+          runId: currentRunId,
+          snapshotId: activeSnap.snapshotId,
+          targetTabId: activeSnap.tabId,
+          mode: 'allow_overwrite',
+          assignments: quickAssignments,
+        },
+      });
+
+      setIsExecuting(false);
+      setExecutingRunId(null);
+
+      if (!res || res.error || !res.runRecord) {
+        setToastMessage(res?.error || '模板一键填充执行失败');
+        return;
+      }
+
+      setLastRunRecord(res.runRecord);
+      await formFillRunRepo.save(res.runRecord).catch(() => {});
+
+      const successCount = res.runRecord.steps.filter((s) => s.status === 'success').length;
+      setToastMessage(`⚡ 模板 [${template.name}] 填充结束，已完成 ${successCount}/${quickAssignments.length} 项字段写入并校验通过`);
+
+      // 重新静默扫描以同步页面最新状态
+      const refreshed = await sendToBackground<ScanFormSnapshotResponse>({
+        type: 'SCAN_FORM_SNAPSHOT',
+        payload: undefined,
+      });
+      if (refreshed?.snapshot) {
+        setSnapshot(refreshed.snapshot);
+      }
+    } catch (err) {
+      setIsExecuting(false);
+      setExecutingRunId(null);
+      setToastMessage((err as Error).message || '模板一键填充异常');
+    } finally {
+      setIsScanning(false);
+      setIsQuickFillingTemplateId(null);
+    }
+  };
+
+  // 10. 删除模板
+  const handleDeleteTemplate = async (templateId: string) => {
+    await formFillTemplateRepo.delete(templateId);
+    const updated = await formFillTemplateRepo.listAll();
+    setTemplates(updated);
+    if (selectedTemplateId === templateId) {
+      setSelectedTemplateId('');
+    }
+    setToastMessage('已删除该填写模板');
   };
 
   return (
@@ -633,20 +852,38 @@ export const AiFillPage: React.FC = () => {
             <FileSpreadsheet className="w-4 h-4 text-blue-600" />
             <span>表单识别与范围</span>
           </div>
-          <button
-            onClick={handleScanForm}
-            disabled={isScanning || isExecuting}
-            className="px-2.5 py-1 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg font-medium transition-colors disabled:opacity-50"
-          >
-            {isScanning ? '正在分析...' : snapshot ? '重新识别' : '识别当前网页表单'}
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={handleExtractFormAsTemplate}
+              disabled={isScanning || isExecuting}
+              className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center gap-1 text-[11px]"
+              title="识别当前表单和已录入的字段值并保存为模板"
+            >
+              <BookmarkPlus className="w-3.5 h-3.5 text-amber-600" />
+              <span>存为模板</span>
+            </button>
+            <button
+              onClick={handleScanForm}
+              disabled={isScanning || isExecuting}
+              className="px-2.5 py-1 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg font-medium transition-colors disabled:opacity-50"
+            >
+              {isScanning ? '正在分析...' : snapshot ? '重新识别' : '识别当前网页表单'}
+            </button>
+          </div>
         </div>
 
         {snapshot ? (
           <div className="flex flex-col gap-1.5 pt-1 text-[11px] text-slate-600 border-t border-slate-100">
             <div className="flex items-center justify-between">
-              <span className="truncate max-w-[200px] text-slate-500">{snapshot.title || snapshot.url}</span>
-              <span className="font-semibold text-slate-700">共 {currentFields.length} 个字段</span>
+              <span className="truncate max-w-[180px] text-slate-500">{snapshot.title || snapshot.url}</span>
+              <span className="font-semibold text-slate-700">
+                共 {currentFields.length} 个字段
+                {filledCount > 0 && (
+                  <span className="text-emerald-600 font-normal ml-1">
+                    (已填 {filledCount} 项)
+                  </span>
+                )}
+              </span>
             </div>
 
             {snapshot.forms.length > 1 && (
@@ -670,6 +907,135 @@ export const AiFillPage: React.FC = () => {
         ) : (
           <p className="text-[11px] text-slate-400">点击按钮自动扫描当前活动标签页的所有表单控件与约束</p>
         )}
+      </div>
+
+      {/* 填写模板库 (可一键秒填) */}
+      <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5 font-bold text-slate-800">
+            <Bookmark className="w-4 h-4 text-indigo-600" />
+            <span>填写模板库</span>
+            {templates.length > 0 && (
+              <span className="text-[10px] bg-indigo-50 text-indigo-700 px-1.5 py-0.2 rounded-full font-medium">
+                {templates.length}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={handleExtractFormAsTemplate}
+              disabled={isScanning || isExecuting}
+              className="text-[10px] text-indigo-600 hover:text-indigo-700 font-medium flex items-center gap-0.5 transition-colors px-1.5 py-0.5 rounded hover:bg-indigo-50"
+              title="从当前网页提取已录入数据保存为新模板"
+            >
+              <BookmarkPlus className="w-3 h-3" />
+              <span>提取录入为模板</span>
+            </button>
+            {templates.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setIsTemplatesExpanded(!isTemplatesExpanded)}
+                className="text-slate-400 hover:text-slate-600 transition-colors p-1"
+                title={isTemplatesExpanded ? '折叠列表' : '展开列表'}
+              >
+                {isTemplatesExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {templates.length === 0 ? (
+          <p className="text-[11px] text-slate-400 py-1">
+            💡 在网页表单填写数据后点击「存为模板」，保存后下次打开同类表单即可一键秒填
+          </p>
+        ) : isTemplatesExpanded ? (
+          <div className="flex flex-col gap-2 max-h-56 overflow-y-auto pr-1">
+            {templates.map((tpl) => {
+              const isCurrentlyFilling = isQuickFillingTemplateId === tpl.id;
+              const dateStr = tpl.updatedAt
+                ? new Date(tpl.updatedAt).toLocaleDateString('zh-CN', {
+                    month: 'numeric',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })
+                : '';
+              return (
+                <div
+                  key={tpl.id}
+                  className="p-2.5 rounded-lg border border-slate-200 bg-slate-50/70 hover:border-slate-300 transition-all flex flex-col gap-1.5"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 truncate max-w-[190px]">
+                      <span className="font-semibold text-slate-800 text-[11px] truncate" title={tpl.name}>
+                        {tpl.name}
+                      </span>
+                      <span className="text-[9px] bg-slate-200/80 text-slate-600 px-1.5 py-0.2 rounded shrink-0">
+                        {tpl.rules.length} 项
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleApplyTemplate(tpl.id)}
+                        disabled={isExecuting}
+                        className="px-2 py-0.5 bg-slate-200/70 hover:bg-slate-200 text-slate-700 rounded text-[10px] font-medium transition-colors"
+                        title="载入到下方方案预览中微调修改"
+                      >
+                        套用
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleQuickFillTemplate(tpl)}
+                        disabled={isExecuting}
+                        className="px-2.5 py-0.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded text-[10px] font-medium flex items-center gap-0.5 transition-colors shadow-2xs"
+                        title="一键直接填充当前网页"
+                      >
+                        <Zap className="w-2.5 h-2.5" />
+                        <span>{isCurrentlyFilling ? '填充中...' : '一键填充'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteTemplate(tpl.id)}
+                        className="text-slate-300 hover:text-red-500 transition-colors p-0.5 ml-0.5"
+                        title="删除此模板"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 字段规则预览标签 */}
+                  <div className="flex items-center gap-1 flex-wrap text-[10px] text-slate-600">
+                    {dateStr && (
+                      <>
+                        <span className="text-slate-400 flex items-center gap-0.5">
+                          <Clock className="w-2.5 h-2.5" />
+                          {dateStr}
+                        </span>
+                        <span className="text-slate-300">·</span>
+                      </>
+                    )}
+                    {tpl.rules.slice(0, 3).map((r, rIdx) => (
+                      <span
+                        key={rIdx}
+                        className="px-1.5 py-0.2 bg-white border border-slate-200/80 rounded text-slate-600 truncate max-w-[110px]"
+                        title={`${r.labelPattern || r.fieldName}: ${String(r.value)}`}
+                      >
+                        {r.labelPattern || r.fieldName}: <strong className="font-normal text-slate-800">{String(r.value)}</strong>
+                      </span>
+                    ))}
+                    {tpl.rules.length > 3 && (
+                      <span className="text-slate-400 text-[9px]">+{tpl.rules.length - 3}</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
       </div>
 
       {/* 常用与历史填表卡片 (一键填表) */}
@@ -819,7 +1185,7 @@ export const AiFillPage: React.FC = () => {
               <option value="">-- 选择已有填写模板 --</option>
               {templates.map((t) => (
                 <option key={t.id} value={t.id}>
-                  {t.name} ({t.rules.length} 条规则)
+                  {t.name} ({t.rules.length} 项)
                 </option>
               ))}
             </select>
@@ -827,9 +1193,23 @@ export const AiFillPage: React.FC = () => {
               type="button"
               onClick={() => handleApplyTemplate(selectedTemplateId)}
               disabled={!selectedTemplateId || !snapshot}
-              className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded text-[11px] font-medium shrink-0 transition-colors"
+              className="px-2 py-1 bg-slate-200 hover:bg-slate-300 disabled:opacity-40 text-slate-700 rounded text-[11px] font-medium shrink-0 transition-colors"
+              title="载入到下方方案预览中微调"
             >
               套用
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const t = templates.find((tpl) => tpl.id === selectedTemplateId);
+                if (t) handleQuickFillTemplate(t);
+              }}
+              disabled={!selectedTemplateId || isExecuting}
+              className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white rounded text-[11px] font-medium shrink-0 transition-colors flex items-center gap-1 shadow-2xs"
+              title="直接一键填充当前网页"
+            >
+              <Zap className="w-3 h-3" />
+              <span>{isQuickFillingTemplateId === selectedTemplateId ? '填充中...' : '一键填充'}</span>
             </button>
           </div>
         )}
@@ -1061,20 +1441,22 @@ export const AiFillPage: React.FC = () => {
                   ? '部分成功'
                   : lastRunRecord.status === 'undone'
                     ? '已撤销'
-                    : '已停止'}
+                    : lastRunRecord.status === 'failed'
+                      ? '执行失败'
+                      : '已停止'}
             </span>
           </div>
 
           <div className="flex flex-col gap-1 text-[11px] text-slate-600">
             {lastRunRecord.steps.map((step) => (
-              <div key={step.fieldId} className="flex items-center justify-between py-0.5">
-                <span className="truncate max-w-[160px] text-slate-700">{step.fieldId.split('_').slice(-1)[0]}</span>
+              <div key={step.fieldId} className="flex flex-col gap-1 border-b border-slate-100 last:border-0 py-1.5 select-text">
+                <span className="truncate max-w-[160px] text-slate-700">{snapshot?.fields.find((field) => field.fieldId === step.fieldId)?.label || assignments.find((item) => item.fieldId === step.fieldId)?.fieldLabel || step.fieldId.split('_').slice(-1)[0]}</span>
                 {step.status === 'success' ? (
                   <span className="text-emerald-600 font-medium">✓ 已写入并回读</span>
                 ) : step.status === 'skipped' ? (
-                  <span className="text-slate-400">跳过</span>
+                  <span className="text-slate-400 whitespace-pre-wrap break-words">跳过：{step.skippedReason || step.error || '未执行'}</span>
                 ) : (
-                  <span className="text-red-500 truncate max-w-[120px]" title={step.error}>
+                  <span className="text-red-600 whitespace-pre-wrap break-words select-text" title={step.error}>
                     × {step.error || '失败'}
                   </span>
                 )}

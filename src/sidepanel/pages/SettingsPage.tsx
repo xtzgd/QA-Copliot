@@ -24,6 +24,7 @@ import {
   Eye,
   EyeOff,
   Bot,
+  Camera,
   Sliders,
   Download,
   Upload,
@@ -59,6 +60,7 @@ export const SettingsPage: React.FC = () => {
   const [aiModel, setAiModel] = useState('deepseek-chat');
   const [showAiKey, setShowAiKey] = useState(false);
   const [aiBugAssistanceEnabled, setAiBugAssistanceEnabled] = useState(true);
+  const [aiVisionEnabled, setAiVisionEnabled] = useState(true);
   const [aiTesting, setAiTesting] = useState(false);
   const [aiTestResult, setAiTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const aiProbeIdRef = useRef(0);
@@ -127,6 +129,7 @@ export const SettingsPage: React.FC = () => {
         aiModel: 'deepseek-chat',
         aiRemoteEndpoint: '',
         aiBugAssistanceEnabled: true,
+        aiVisionEnabled: true,
         zentaoBaseUrl: 'https://zentao.hbisscm.com',
         zentaoAuthMode: 'cookie',
         zentaoApiVersion: 'v2',
@@ -144,6 +147,7 @@ export const SettingsPage: React.FC = () => {
         setAiApiKey(String(result.aiApiKey || ''));
         setAiModel(String(result.aiModel || 'deepseek-chat'));
         setAiBugAssistanceEnabled(result.aiBugAssistanceEnabled !== false);
+        setAiVisionEnabled(result.aiVisionEnabled !== false);
         const savedUrl = String(result.zentaoBaseUrl || 'https://zentao.hbisscm.com');
         const savedAuthMode = (result.zentaoAuthMode === 'token' ? 'token' : 'cookie') as 'cookie' | 'token';
         const savedVer = (result.zentaoApiVersion === 'v1' ? 'v1' : 'v2') as 'v1' | 'v2';
@@ -228,6 +232,7 @@ export const SettingsPage: React.FC = () => {
       aiModel: aiModel.trim() || 'deepseek-chat',
       aiRemoteEndpoint: aiBaseUrl.trim(), // 保持旧字段同步
       aiBugAssistanceEnabled,
+      aiVisionEnabled,
     });
     aiProviderService.configure(aiProviderMode, {
       baseUrl: aiBaseUrl.trim(),
@@ -1382,6 +1387,28 @@ export const SettingsPage: React.FC = () => {
           </label>
         </div>
 
+        {/* 多模态视觉模型截图辅助开关 */}
+        <div className="flex items-center justify-between p-3 bg-purple-50/50 rounded-xl border border-purple-100">
+          <div className="flex flex-col gap-0.5 pr-2">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
+              <Camera className="w-3.5 h-3.5 text-purple-600" />
+              <span>多模态视觉截图辅助 (Vision Agent)</span>
+            </div>
+            <span className="text-[11px] text-slate-500 leading-relaxed">
+              开启后，自然语言 Agent 和用例执行会截取当前网页画面发送给模型（支持 GPT-4o、Qwen-VL、Claude 等支持视觉的模型；纯文本模型会自动智能降级）。
+            </span>
+          </div>
+          <label className="relative inline-flex items-center cursor-pointer shrink-0">
+            <input
+              type="checkbox"
+              checked={aiVisionEnabled}
+              onChange={(event) => setAiVisionEnabled(event.target.checked)}
+              className="sr-only peer"
+            />
+            <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+          </label>
+        </div>
+
         {aiProviderMode === 'remote' && (
           <div className="flex flex-col gap-2.5 pt-1">
             {/* 1. Base URL */}
@@ -1456,15 +1483,17 @@ export const SettingsPage: React.FC = () => {
                   setAiTesting(false);
                   setAiTestResult(null);
                 }}
-                placeholder="如: deepseek-chat, gpt-4o-mini, qwen-plus"
+                placeholder="如: deepseek-chat, gpt-4o, qwen-vl-max"
                 className="p-2 border border-slate-200 rounded-lg text-xs bg-slate-50 font-mono focus:bg-white focus:border-purple-500 transition-colors"
               />
               <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
                 {[
                   { name: 'deepseek-chat', label: 'DeepSeek-V3' },
                   { name: 'deepseek-reasoner', label: 'DeepSeek-R1' },
-                  { name: 'gpt-4o-mini', label: 'GPT-4o Mini' },
-                  { name: 'qwen-plus', label: '通义千问 Plus' },
+                  { name: 'gpt-4o', label: 'GPT-4o (视觉)' },
+                  { name: 'gpt-4o-mini', label: 'GPT-4o Mini (视觉)' },
+                  { name: 'qwen-vl-max', label: '通义千问 VL (视觉)' },
+                  { name: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet' },
                   { name: 'qwen2.5', label: 'Ollama 本地' },
                 ].map((item) => (
                   <button

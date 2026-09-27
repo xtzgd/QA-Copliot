@@ -6,17 +6,21 @@ import React, { useEffect, useState } from 'react';
 import {
   AlertCircle,
   AlertOctagon,
+  Bot,
   Camera,
   CheckCircle2,
   ChevronRight,
-  Code2,
   FileSpreadsheet,
+  Loader2,
   Play,
   Settings,
+  Sparkles,
   Square,
   Video,
   Pin,
+  PinOff,
   PanelRightClose,
+  ExternalLink,
 } from 'lucide-react';
 import { sendToBackground } from '../../shared/messages';
 import { useAppStore } from '../store/useAppStore';
@@ -26,6 +30,7 @@ import { QuickLoginCard } from '../components/QuickLoginCard';
 
 export const HomePage: React.FC = () => {
   const {
+    activeTask,
     activeSession,
     recentAnomalies,
     isCapturing,
@@ -40,6 +45,62 @@ export const HomePage: React.FC = () => {
 
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isRecording, setIsRecording] = useState(false);
+  const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(pipService.isAlwaysOnTop());
+  const [nlInstruction, setNlInstruction] = useState('');
+  const [isNlRunning, setIsNlRunning] = useState(false);
+  const hasActiveRun = activeTask?.type === 'runner_test' && ['running', 'cancelling', 'queued'].includes(activeTask.status);
+
+  const handleQuickRunNl = async () => {
+    const goal = nlInstruction.trim();
+    if (!goal) {
+      setToastMessage('请先描述要执行的测试目标');
+      return;
+    }
+    useAppStore.setState({ lastRunnerTask: null });
+    setIsNlRunning(true);
+    try {
+      const result = await sendToBackground<{ success?: boolean; error?: string; failedStep?: number; cancelled?: boolean }>({
+        type: 'RUN_NATURAL_LANGUAGE_TEST',
+        payload: { instruction: goal },
+      });
+      if (result?.error) {
+        setToastMessage(`自动化执行失败：${result.error}`);
+      } else if (result?.success) {
+        setToastMessage('自然语言自动化任务完成');
+      } else if (result?.cancelled) {
+        setToastMessage('任务已取消');
+      }
+    } catch (error) {
+      const message = (error as Error).message || '无法连接后台';
+      setToastMessage(`自动化执行失败：${message}`);
+    } finally {
+      setIsNlRunning(false);
+    }
+  };
+
+  const handleToggleAlwaysOnTop = async () => {
+    const nextState = await pipService.toggleAlwaysOnTop();
+    setIsAlwaysOnTop(nextState);
+  };
+
+  useEffect(() => {
+    setIsAlwaysOnTop(pipService.isAlwaysOnTop());
+    const unsub = pipService.subscribePip((win) => {
+      setIsAlwaysOnTop(Boolean(win) || pipService.isAlwaysOnTop());
+    });
+    const handleAlwaysOnTopChanged = (e: any) => {
+      if (typeof e.detail?.enabled === 'boolean') {
+        setIsAlwaysOnTop(e.detail.enabled);
+      } else {
+        setIsAlwaysOnTop(pipService.isAlwaysOnTop());
+      }
+    };
+    window.addEventListener('PIP_ALWAYS_ON_TOP_CHANGED', handleAlwaysOnTopChanged);
+    return () => {
+      unsub();
+      window.removeEventListener('PIP_ALWAYS_ON_TOP_CHANGED', handleAlwaysOnTopChanged);
+    };
+  }, []);
 
   useEffect(() => {
     setIsRecording(recordingService.getStatus().active);
@@ -160,9 +221,44 @@ export const HomePage: React.FC = () => {
           </div>
         </div>
         <div className="flex items-center gap-1.5">
+          {/* 置顶按钮 (仅在小窗模式下显示，吸附状态不显示) */}
+          {pipService.isDetachedMode() && (
+            <button
+              type="button"
+              onClick={handleToggleAlwaysOnTop}
+              className={`px-2 py-1 rounded-md text-[11px] font-semibold flex items-center gap-1 transition-all border shadow-2xs ${
+                isAlwaysOnTop
+                  ? 'bg-amber-50 text-amber-700 border-amber-300 hover:bg-amber-100 shadow-xs'
+                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50 hover:text-amber-600 hover:border-amber-200'
+              }`}
+              title={
+                isAlwaysOnTop
+                  ? '已开启置顶 (小窗保持在屏幕最前端，点击取消置顶)'
+                  : '开启小窗置顶 (保持小窗悬浮在最前)'
+              }
+            >
+              {isAlwaysOnTop ? (
+                <>
+                  <PinOff className="w-3.5 h-3.5 text-amber-600" />
+                  <span>已置顶</span>
+                </>
+              ) : (
+                <>
+                  <Pin className="w-3.5 h-3.5 text-slate-600" />
+                  <span>置顶</span>
+                </>
+              )}
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => window.dispatchEvent(new CustomEvent('TOGGLE_PIP_MODE'))}
+            onClick={() => {
+              if (pipService.isDetachedMode()) {
+                pipService.attachToSidePanel();
+              } else {
+                pipService.detachToWindow();
+              }
+            }}
             className={`px-2 py-1 rounded-md text-[11px] font-semibold flex items-center gap-1 transition-all border shadow-2xs ${
               pipService.isDetachedMode()
                 ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
@@ -177,7 +273,7 @@ export const HomePage: React.FC = () => {
               </>
             ) : (
               <>
-                <Pin className="w-3.5 h-3.5 text-blue-600" />
+                <ExternalLink className="w-3.5 h-3.5 text-blue-600" />
                 <span>悬浮小窗</span>
               </>
             )}
@@ -204,8 +300,17 @@ export const HomePage: React.FC = () => {
             ) : (
               <span className="inline-flex rounded-full h-2.5 w-2.5 bg-slate-400 shrink-0" />
             )}
-            <span className="text-sm font-semibold tracking-wide truncate" title={activeSession ? activeSession.title : undefined}>
-              {activeSession ? activeSession.title : '未开始测试'}
+            <span
+              className="text-sm font-semibold tracking-wide truncate"
+              title={
+                activeSession
+                  ? (activeSession.title || '').replace(/\s*\((?:商城系统|默认项目)[-_]?(?:TEST|DEV|UAT|PROD)?\)/gi, '').trim() || activeSession.title
+                  : undefined
+              }
+            >
+              {activeSession
+                ? (activeSession.title || '').replace(/\s*\((?:商城系统|默认项目)[-_]?(?:TEST|DEV|UAT|PROD)?\)/gi, '').trim() || activeSession.title
+                : '未开始测试'}
             </span>
           </div>
           <span className="text-xs font-mono font-medium bg-blue-800/40 px-2 py-0.5 rounded text-blue-100 shrink-0">
@@ -296,21 +401,78 @@ export const HomePage: React.FC = () => {
             setAiSubTab('formFill');
             setCurrentTab('ai');
           }}
-          className="flex flex-col items-center justify-center p-2.5 bg-white border border-slate-200 rounded-xl hover:bg-blue-50/50 hover:border-blue-200 transition-colors shadow-xs text-center"
+          className="flex flex-col items-center justify-center p-2.5 bg-white border border-slate-200 rounded-xl hover:bg-blue-50/50 hover:border-blue-200 transition-colors shadow-xs text-center cursor-pointer"
         >
           <FileSpreadsheet className="w-4 h-4 text-blue-600 mb-1" />
           <span className="text-[11px] font-medium text-slate-700">智能填表</span>
         </button>
         <button
           onClick={() => {
-            setAiSubTab('dom');
+            setAiSubTab('agent');
             setCurrentTab('ai');
           }}
-          className="flex flex-col items-center justify-center p-2.5 bg-white border border-slate-200 rounded-xl hover:bg-indigo-50/50 hover:border-indigo-200 transition-colors shadow-xs text-center"
+          className="flex flex-col items-center justify-center p-2.5 bg-white border border-slate-200 rounded-xl hover:bg-violet-50/50 hover:border-violet-200 transition-colors shadow-xs text-center cursor-pointer"
         >
-          <Code2 className="w-4 h-4 text-indigo-600 mb-1" />
-          <span className="text-[11px] font-medium text-slate-700">页面定位器</span>
+          <Bot className="w-4 h-4 text-violet-600 mb-1" />
+          <span className="text-[11px] font-medium text-slate-700">自然语言测试</span>
         </button>
+      </div>
+
+      {/* 首页自然语言测试快捷卡片 */}
+      <div className="bg-white rounded-xl p-3 border border-slate-200 shadow-xs flex flex-col gap-2.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <div className="w-5 h-5 rounded-md bg-violet-100 flex items-center justify-center text-violet-600">
+              <Bot className="w-3.5 h-3.5" />
+            </div>
+            <span className="text-xs font-bold text-slate-800">自然语言测试</span>
+            <span className="text-[10px] font-semibold bg-violet-50 text-violet-600 px-1.5 py-0.5 rounded">
+              AI Agent
+            </span>
+          </div>
+          <button
+            onClick={() => {
+              setAiSubTab('agent');
+              setCurrentTab('ai');
+            }}
+            className="text-[11px] text-violet-600 hover:text-violet-700 flex items-center font-medium cursor-pointer"
+          >
+            完整面板 <ChevronRight className="w-3.5 h-3.5 ml-0.5" />
+          </button>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <input
+            type="text"
+            value={nlInstruction}
+            onChange={(e) => setNlInstruction(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !isNlRunning && !hasActiveRun) {
+                handleQuickRunNl();
+              }
+            }}
+            placeholder="描述测试目标，如：在搜索框中输入 QA Copilot 并提交"
+            disabled={isNlRunning || hasActiveRun}
+            className="flex-1 px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-violet-500 focus:bg-white placeholder:text-slate-400"
+          />
+          <button
+            onClick={handleQuickRunNl}
+            disabled={isNlRunning || hasActiveRun || !nlInstruction.trim()}
+            className="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg flex items-center gap-1 transition-colors shrink-0 shadow-xs cursor-pointer disabled:cursor-not-allowed"
+          >
+            {isNlRunning ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <span>执行中</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>执行</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* 最近异常模块 */}

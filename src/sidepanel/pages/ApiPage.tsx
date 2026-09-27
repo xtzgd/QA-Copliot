@@ -102,7 +102,16 @@ export const ApiPage: React.FC = () => {
     }
   };
 
-  const formatBody = (body: string) => {
+  const formatBody = (body: unknown): string => {
+    if (body === undefined || body === null) return '';
+    if (typeof body === 'object') {
+      try {
+        return JSON.stringify(body, null, 2);
+      } catch {
+        return String(body);
+      }
+    }
+    if (typeof body !== 'string') return String(body);
     try {
       return JSON.stringify(JSON.parse(body), null, 2);
     } catch {
@@ -110,9 +119,10 @@ export const ApiPage: React.FC = () => {
     }
   };
 
-  const copyValue = async (value: string, label: string) => {
+  const copyValue = async (value: unknown, label: string) => {
     try {
-      await navigator.clipboard.writeText(value);
+      const textToCopy = typeof value === 'object' && value !== null ? JSON.stringify(value, null, 2) : String(value ?? '');
+      await navigator.clipboard.writeText(textToCopy);
       setToastMessage(`已复制${label}`);
     } catch {
       setToastMessage('剪贴板写入失败，请检查插件权限后重试');

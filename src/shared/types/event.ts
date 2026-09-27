@@ -26,6 +26,7 @@ export interface ClickEventPayload extends BaseEventPayload {
   text: string;
   role?: string;
   id?: string;
+  obsId?: string;
   name?: string;
   testId?: string;
   ariaLabel?: string;
@@ -37,11 +38,13 @@ export interface ClickEventPayload extends BaseEventPayload {
   fieldLabel?: string;
   placeholder?: string;
   isInput?: boolean;
+  isDatePicker?: boolean;
 }
 
 export interface InputEventPayload extends BaseEventPayload {
   tag: string;
   id?: string;
+  obsId?: string;
   name?: string;
   selector?: string;
   fieldLabel?: string;

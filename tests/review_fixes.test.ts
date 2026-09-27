@@ -204,6 +204,10 @@ describe('第二轮复查 5 项关键问题回归验证', () => {
 
     vi.stubGlobal('MediaRecorder', MockMediaRecorder);
 
+    if (typeof navigator === 'undefined') {
+      vi.stubGlobal('navigator', {});
+    }
+
     Object.defineProperty(navigator, 'mediaDevices', {
       value: {
         getUserMedia: vi.fn(async () => ({

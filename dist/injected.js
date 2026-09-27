@@ -1,19 +1,33 @@
 (function() {
   "use strict";
   function captureText(value, maxLength = 2e4) {
+    var _a;
     if (value === void 0 || value === null) return "";
     if (typeof value === "string") return value.slice(0, maxLength);
-    if (value instanceof Error || typeof value === "object" && value !== null && "message" in value && "name" in value) {
+    if (value instanceof Error || typeof value === "object" && value !== null && ("stack" in value && typeof value.stack === "string" || value.name === "DOMException" || ((_a = value.constructor) == null ? void 0 : _a.name) === "DOMException")) {
       const err = value;
       const text = err.stack || `${err.name || "Error"}: ${err.message || ""}`;
       return text.slice(0, maxLength);
     }
+    if (typeof FormData !== "undefined" && value instanceof FormData) {
+      try {
+        const record = {};
+        value.forEach((v, k) => {
+          record[k] = typeof v === "string" ? v : v.name;
+        });
+        return JSON.stringify(record).slice(0, maxLength);
+      } catch {
+      }
+    }
+    if (typeof URLSearchParams !== "undefined" && value instanceof URLSearchParams) {
+      return value.toString().slice(0, maxLength);
+    }
     try {
       const json = JSON.stringify(value);
-      if (json === "{}" && typeof value === "object") {
-        return String(value).slice(0, maxLength);
+      if (json !== void 0) {
+        return json.slice(0, maxLength);
       }
-      return json.slice(0, maxLength);
+      return String(value).slice(0, maxLength);
     } catch {
       return String(value).slice(0, maxLength);
     }

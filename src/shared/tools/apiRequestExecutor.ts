@@ -26,6 +26,14 @@ export interface ApiExecutionResult {
   error?: string;
 }
 
+function safeDecodeURIComponent(val: string): string {
+  try {
+    return decodeURIComponent(val);
+  } catch {
+    return val;
+  }
+}
+
 /**
  * 解析 URL 中的 Query String 成为键值对列表
  */
@@ -44,10 +52,10 @@ export function parseQueryParams(url: string): QueryParamItem[] {
       if (!pair) continue;
       const eqIndex = pair.indexOf('=');
       if (eqIndex === -1) {
-        items.push({ key: decodeURIComponent(pair), value: '', enabled: true });
+        items.push({ key: safeDecodeURIComponent(pair), value: '', enabled: true });
       } else {
-        const k = decodeURIComponent(pair.slice(0, eqIndex));
-        const v = decodeURIComponent(pair.slice(eqIndex + 1));
+        const k = safeDecodeURIComponent(pair.slice(0, eqIndex));
+        const v = safeDecodeURIComponent(pair.slice(eqIndex + 1));
         items.push({ key: k, value: v, enabled: true });
       }
     }
@@ -73,7 +81,11 @@ export function stringifyQueryParams(rawUrl: string, params: QueryParamItem[]): 
     }
 
     const query = active
-      .map((p) => `${encodeURIComponent(p.key.trim())}=${encodeURIComponent(p.value)}`)
+      .map((p) => {
+        const key = encodeURIComponent(p.key.trim());
+        const rawVal = typeof p.value === 'object' && p.value !== null ? JSON.stringify(p.value) : String(p.value ?? '');
+        return `${key}=${encodeURIComponent(rawVal)}`;
+      })
       .join('&');
 
     return `${baseUrl}?${query}${hash}`;
@@ -89,7 +101,7 @@ export async function executeApiRequest(config: {
   method: string;
   url: string;
   headers?: Array<{ name: string; value: string; enabled?: boolean }>;
-  body?: string;
+  body?: string | unknown;
 }): Promise<ApiExecutionResult> {
   const method = (config.method || 'GET').toUpperCase();
   const url = config.url.trim();
@@ -105,10 +117,35 @@ export async function executeApiRequest(config: {
   }
 
   const hasBody = method !== 'GET' && method !== 'HEAD';
+  let bodyToSend: BodyInit | undefined = undefined;
+
+  if (hasBody && config.body !== undefined && config.body !== null && config.body !== '') {
+    if (typeof config.body === 'object') {
+      try {
+        bodyToSend = JSON.stringify(config.body);
+      } catch {
+        bodyToSend = String(config.body);
+      }
+    } else {
+      bodyToSend = String(config.body);
+    }
+
+    // 针对 JSON 对象入参，若 Header 未声明 Content-Type，智能自动补充 application/json 防止后端拒绝
+    const hasContentType = Object.keys(reqHeaders).some(
+      (k) => k.toLowerCase() === 'content-type'
+    );
+    if (!hasContentType && typeof bodyToSend === 'string') {
+      const trimmed = bodyToSend.trim();
+      if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+        reqHeaders['Content-Type'] = 'application/json';
+      }
+    }
+  }
+
   const init: RequestInit = {
     method,
     headers: reqHeaders,
-    body: hasBody && config.body !== undefined && config.body !== '' ? config.body : undefined,
+    body: bodyToSend,
   };
 
   try {

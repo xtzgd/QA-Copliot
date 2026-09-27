@@ -77,7 +77,7 @@ class MockDOMElement {
   }
 
   matches(selector: string): boolean {
-    const parts = selector.split(',').map((s) => s.trim());
+    const parts = selector.split(',').map((s) => s.trim()).filter(s => ![...s.matchAll(/:not\(([^)]+)\)/g)].some(m => this.matches(m[1]))).map(s => s.replace(/:not\([^)]+\)/g, ''));
     const classList = this.className.split(/\s+/).filter(Boolean);
     for (const part of parts) {
       if (part.startsWith('.') && classList.includes(part.slice(1))) return true;
@@ -301,5 +301,123 @@ describe('智能填表范围锁定与复杂控件支持 (tests/form_scope_and_co
     expect(selectAssignment).toBeDefined();
     expect(selectAssignment?.action).toBe('select');
     expect(selectAssignment?.value).toBe('软件服务');
+  });
+
+  it('5. 现代前端无 input 纯 div 下拉框（如 Element Plus / AntD 无 search 控件）识别与填写', async () => {
+    const doc = new MockDOMElement('body', 'body');
+    const formItem = new MockDOMElement('div', '', 'el-form-item');
+    const label = new MockDOMElement('label', '', 'el-form-item__label');
+    label.textContent = '所属行业';
+    formItem.appendChild(label);
+
+    // 模拟无 input 的 Element Plus 纯 div 下拉控件
+    const selectDiv = new MockDOMElement('div', 'industry-select', 'el-select');
+    const selectWrapper = new MockDOMElement('div', '', 'el-select__wrapper');
+    const placeholderSpan = new MockDOMElement('span', '', 'el-select__placeholder');
+    placeholderSpan.textContent = '请选择行业';
+    selectWrapper.appendChild(placeholderSpan);
+    selectDiv.appendChild(selectWrapper);
+    formItem.appendChild(selectDiv);
+    doc.appendChild(formItem);
+
+    // 扫描表单
+    const snapshot = FormScanner.scan(doc as any);
+    expect(snapshot.fields.length).toBe(1);
+    const field = snapshot.fields[0];
+    expect(field.label).toBe('所属行业');
+    expect(field.kind).toBe('select');
+    expect(field.isEmpty).toBe(true);
+
+    // 模拟点击展开后浮层挂载到 body 上的下拉项
+    const option1 = new MockDOMElement('div', 'opt-1', 'el-select-dropdown__item');
+    option1.textContent = '软件和信息技术服务业';
+    option1.click = () => {
+      // 模拟前端框架选中后更新已选项文本
+      placeholderSpan.className = 'el-select__selected-item';
+      placeholderSpan.textContent = '软件和信息技术服务业';
+    };
+    const menu = new MockDOMElement('div', '', 'el-select-dropdown');
+    menu.appendChild(option1);
+    selectDiv.appendChild(menu);
+
+    // 执行填充
+    const runRecord = await FormExecutor.executePlan(
+      snapshot.snapshotId,
+      [
+        {
+          fieldId: field.fieldId,
+          action: 'select',
+          value: '软件和信息技术服务业',
+        },
+      ],
+      'empty_only'
+    );
+
+    expect(runRecord.status, JSON.stringify(runRecord.steps)).toBe('completed');
+    expect(runRecord.steps[0].status).toBe('success');
+    expect(runRecord.steps[0].appliedValue).toBe('软件和信息技术服务业');
+  });
+
+  it('6. 内部含只读 input 的常见组件库下拉框（Element UI / 自研类名）识别为 select，排重且不误判为 text', () => {
+    const doc = new MockDOMElement('body', 'body');
+
+    // 常见结构：外层容器，内部嵌套 input 与下拉箭头图标
+    const formItem = new MockDOMElement('div', '', 'form-item');
+    const selectContainer = new MockDOMElement('div', 'role-select-box', 'el-select');
+    const selectWrapper = new MockDOMElement('div', '', 'el-select__wrapper');
+    const innerInput = new MockDOMElement('input', 'role-input', 'el-input__inner');
+    innerInput.readOnly = true;
+    innerInput.placeholder = '请选择角色';
+    const arrowIcon = new MockDOMElement('i', '', 'el-select__caret');
+
+    selectWrapper.appendChild(innerInput);
+    selectWrapper.appendChild(arrowIcon);
+    selectContainer.appendChild(selectWrapper);
+    formItem.appendChild(selectContainer);
+    doc.appendChild(formItem);
+
+    const snapshot = FormScanner.scan(doc as any);
+
+    // 关键断言 1: 组件根容器与内部 input 严格排重，仅生成 1 个字段
+    expect(snapshot.fields.length).toBe(1);
+
+    const field = snapshot.fields[0];
+    // 关键断言 2: 类型必须是 select，绝不能误判为 text！
+    expect(field.kind).toBe('select');
+    // 关键断言 3: 必须准确提取 Label 为“角色”，绝不能是“未命名字段”！
+    expect(field.label).toBe('角色');
+    expect(field.isEmpty).toBe(true);
+    expect(field.readOnly).toBe(false); // 下拉框豁免只读
+  });
+
+  it('7. 占位符智能剥离与字段命名：即使完全没有 label 标签，也能从 placeholder 精准命名，彻底杜绝“未命名字段”', () => {
+    const doc = new MockDOMElement('body', 'body');
+
+    // 1. 无 label 的自定义部门下拉框
+    const deptBox = new MockDOMElement('div', 'dept-box', 'custom-select');
+    const deptInput = new MockDOMElement('input', 'dept-input');
+    deptInput.readOnly = true;
+    deptInput.placeholder = '请选择所属部门';
+    deptBox.appendChild(deptInput);
+    doc.appendChild(deptBox);
+
+    // 2. 无 label 的手机号输入框
+    const phoneInput = new MockDOMElement('input', 'phone-input');
+    phoneInput.placeholder = '请输入经办人联系电话';
+    doc.appendChild(phoneInput);
+
+    const snapshot = FormScanner.scan(doc as any);
+
+    expect(snapshot.fields.length).toBe(2);
+
+    const deptField = snapshot.fields.find((f) => f.fieldId.includes('dept'));
+    expect(deptField).toBeDefined();
+    expect(deptField?.kind).toBe('select'); // 识别为下拉框
+    expect(deptField?.label).toBe('所属部门'); // 成功剥离“请选择”，提炼为“所属部门”，绝非“未命名字段”
+
+    const phoneField = snapshot.fields.find((f) => f.fieldId.includes('phone'));
+    expect(phoneField).toBeDefined();
+    expect(phoneField?.kind).toBe('text');
+    expect(phoneField?.label).toBe('经办人联系电话'); // 成功剥离“请输入”，提炼为“经办人联系电话”
   });
 });

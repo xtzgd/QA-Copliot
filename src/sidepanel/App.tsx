@@ -2,19 +2,20 @@
  * Side Panel 主容器与底部导航栏 (对齐设计图底部 Tab 栏)
  */
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Activity,
   Bot,
   Bug,
   CheckCircle2,
   Home,
+  Pin,
   Settings,
   Terminal,
   X,
   Loader2,
   StopCircle,
-  PanelRightClose,
 } from 'lucide-react';
 import { NavTab, useAppStore } from './store/useAppStore';
 import { pipService } from './services/pipService';
@@ -43,6 +44,14 @@ export const App: React.FC = () => {
   } = useAppStore();
 
   const isDetached = pipService.isDetachedMode();
+  const [pipWindow, setPipWindow] = useState<Window | null>(pipService.getPipWindow());
+
+  useEffect(() => {
+    return pipService.subscribePip((win) => {
+      setPipWindow(win);
+    });
+  }, []);
+
   const activeTaskStep = activeTask
     ? activeTask.steps.find((step) => step.status === 'running') || activeTask.steps[Math.max(0, activeTask.currentStep - 1)]
     : null;
@@ -54,6 +63,20 @@ export const App: React.FC = () => {
       await pipService.detachToWindow();
     }
   };
+
+  // 悬浮小窗置顶模式下：鼠标滑入小窗自动前置激活
+  useEffect(() => {
+    if (!isDetached) return;
+    const handleMouseEnter = () => {
+      if (pipService.isAlwaysOnTop()) {
+        pipService.bringToFront();
+      }
+    };
+    window.addEventListener('mouseenter', handleMouseEnter);
+    return () => {
+      window.removeEventListener('mouseenter', handleMouseEnter);
+    };
+  }, [isDetached]);
 
   useEffect(() => {
     const handleToggleEvent = () => {
@@ -90,6 +113,9 @@ export const App: React.FC = () => {
 
     // 监听 Background 广播的消息
     const messageListener = (message: ExtensionMessage) => {
+      if (isDetached && pipService.isAlwaysOnTop()) {
+        pipService.bringToFront();
+      }
       if (message.type === 'EVENT_RECORDED') {
         handleIncomingEvent(message.payload.event, message.payload.sessionStats);
       } else if (message.type === 'NETWORK_RECORDED') {
@@ -134,7 +160,7 @@ export const App: React.FC = () => {
         chrome.runtime.onMessage.removeListener(messageListener);
       }
     };
-  }, [initSession, handleIncomingEvent]);
+  }, [initSession, handleIncomingEvent, isDetached]);
 
   // 自动隐藏 Toast
   useEffect(() => {
@@ -181,100 +207,109 @@ export const App: React.FC = () => {
     }
   };
 
-  return (
+  const appContent = (
     <div className="relative flex flex-col min-h-screen bg-slate-50">
-      {/* 独立悬浮窗模式下的顶部状态与恢复吸附条 */}
-      {isDetached && (
-        <div className="sticky top-0 z-50 bg-slate-900 text-white px-3 py-1.5 text-[11px] flex items-center justify-between shadow-xs">
-          <div className="flex items-center gap-1.5 text-blue-400 font-semibold">
-            <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
-            <span>独立悬浮运行中 (右侧栏已收起)</span>
+      {/* Toast 提示浮条 */}
+      {toastMessage && (
+        <div className="fixed top-3 left-4 right-4 z-50 flex items-center justify-between p-2.5 bg-slate-900/90 text-white rounded-xl shadow-lg backdrop-blur-xs text-xs animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="font-medium">{toastMessage}</span>
           </div>
-          <button
-            type="button"
-            onClick={togglePipMode}
-            className="text-slate-200 hover:text-white flex items-center gap-1 text-[10px] bg-slate-800 hover:bg-slate-700 px-2.5 py-1 rounded border border-slate-700 transition-colors font-medium shadow-xs"
-            title="关闭独立浮窗并重新吸附到浏览器右侧栏"
-          >
-            <PanelRightClose className="w-3.5 h-3.5 text-blue-400" />
-            <span>恢复吸附到右边</span>
+          <button onClick={() => setToastMessage(null)} className="text-slate-400 hover:text-white p-0.5">
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
       )}
 
-        {/* Toast 提示浮条 */}
-        {toastMessage && (
-          <div className="fixed top-3 left-4 right-4 z-50 flex items-center justify-between p-2.5 bg-slate-900/90 text-white rounded-xl shadow-lg backdrop-blur-xs text-xs animate-in fade-in slide-in-from-top-2">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span className="font-medium">{toastMessage}</span>
-            </div>
-            <button onClick={() => setToastMessage(null)} className="text-slate-400 hover:text-white p-0.5">
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
-
-        {/* 全局活动任务指示条 (Replay / Form Fill / etc.) */}
-        {activeTask && (
-          <div className="sticky top-0 z-40 bg-blue-600 text-white px-3 py-2 text-xs flex items-center justify-between shadow-xs transition-all">
-            <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
-              <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0 text-blue-200" />
-              <div className="min-w-0 flex-1">
-                <div className="truncate">
-                  <span className="font-semibold mr-1.5">
-                    {activeTask.type === 'replay' ? '回放中' : activeTask.type === 'form_fill' ? '填表中' : '执行中'}:
+      {/* 全局活动任务指示条 (Replay / Form Fill / etc.) */}
+      {activeTask && (
+        <div className="sticky top-0 z-40 bg-blue-600 text-white px-3 py-2 text-xs flex items-center justify-between shadow-xs transition-all">
+          <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
+            <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0 text-blue-200" />
+            <div className="min-w-0 flex-1">
+              <div className="truncate">
+                <span className="font-semibold mr-1.5">
+                  {activeTask.type === 'replay' ? '回放中' : activeTask.type === 'form_fill' ? '填表中' : '执行中'}:
+                </span>
+                <span className="text-blue-100">{activeTask.title}</span>
+                {activeTask.totalSteps ? (
+                  <span className="ml-1.5 text-blue-200 text-[11px]">
+                    ({activeTask.currentStep}/{activeTask.totalSteps})
                   </span>
-                  <span className="text-blue-100">{activeTask.title}</span>
-                  {activeTask.totalSteps ? (
-                    <span className="ml-1.5 text-blue-200 text-[11px]">
-                      ({activeTask.currentStep}/{activeTask.totalSteps})
-                    </span>
-                  ) : null}
-                </div>
-                {activeTask.type === 'runner_test' && activeTaskStep?.detail && (
-                  <div className="truncate text-[10px] text-blue-100" title={activeTaskStep.detail}>
-                    {activeTaskStep.detail}
-                  </div>
-                )}
+                ) : null}
               </div>
+              {activeTask.type === 'runner_test' && activeTaskStep?.detail && (
+                <div className="truncate text-[10px] text-blue-100" title={activeTaskStep.detail}>
+                  {activeTaskStep.detail}
+                </div>
+              )}
             </div>
-            <button
-              onClick={() => cancelActiveTask()}
-              disabled={activeTask.status === 'cancelling'}
-              className="flex items-center gap-1 bg-blue-700 hover:bg-blue-800 disabled:opacity-50 text-white px-2 py-1 rounded text-[11px] font-medium shrink-0 transition-colors"
-            >
-              <StopCircle className="w-3 h-3" />
-              <span>{activeTask.status === 'cancelling' ? '正在停止...' : '停止'}</span>
-            </button>
           </div>
-        )}
+          <button
+            onClick={() => cancelActiveTask()}
+            disabled={activeTask.status === 'cancelling'}
+            className="flex items-center gap-1 bg-blue-700 hover:bg-blue-800 disabled:opacity-50 text-white px-2 py-1 rounded text-[11px] font-medium shrink-0 transition-colors"
+          >
+            <StopCircle className="w-3 h-3" />
+            <span>{activeTask.status === 'cancelling' ? '正在停止...' : '停止'}</span>
+          </button>
+        </div>
+      )}
 
-        {/* 主视图内容 */}
-        <main className="flex-1 overflow-y-auto">
-          {renderContent()}
-        </main>
+      {/* 主视图内容 */}
+      <main className="flex-1 overflow-y-auto">
+        {renderContent()}
+      </main>
 
-        {/* 底部固定导航栏 */}
-        <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 flex items-center justify-around py-1.5 px-2">
-          {navItems.map((item) => {
-            const isActive = currentTab === item.tab && activeView === 'main';
-            return (
-              <button
-                key={item.tab}
-                onClick={() => setCurrentTab(item.tab)}
-                className={`flex flex-col items-center justify-center py-1 px-2 rounded-lg transition-colors text-[10px] font-medium ${
-                  isActive
-                    ? 'text-blue-600 font-bold'
-                    : 'text-slate-500 hover:text-slate-900'
-                }`}
-              >
-                <div className="mb-0.5">{item.icon}</div>
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
-        </nav>
-      </div>
+      {/* 底部固定导航栏 */}
+      <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 flex items-center justify-around py-1.5 px-2">
+        {navItems.map((item) => {
+          const isActive = currentTab === item.tab && activeView === 'main';
+          return (
+            <button
+              key={item.tab}
+              onClick={() => setCurrentTab(item.tab)}
+              className={`flex flex-col items-center justify-center py-1 px-2 rounded-lg transition-colors text-[10px] font-medium ${
+                isActive
+                  ? 'text-blue-600 font-bold'
+                  : 'text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              <div className="mb-0.5">{item.icon}</div>
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+      </nav>
+    </div>
   );
+
+  if (pipWindow) {
+    return (
+      <>
+        {/* 在父窗口中展示优雅的置顶占位，防止用户还原父窗口时看到白屏 */}
+        <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 text-slate-100 p-6 text-center select-none">
+          <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 mb-4 shadow-lg">
+            <Pin className="w-7 h-7 animate-pulse" />
+          </div>
+          <h2 className="text-base font-bold text-white mb-1.5">独立小窗置顶运行中</h2>
+          <p className="text-xs text-slate-400 max-w-[260px] leading-relaxed mb-6">
+            小窗已处于系统最高层置顶显示，在被测网页任意点击均不会被遮挡。
+          </p>
+          <button
+            onClick={() => pipService.toggleAlwaysOnTop()}
+            className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors shadow-sm cursor-pointer"
+          >
+            退出置顶并恢复本窗口
+          </button>
+        </div>
+
+        {/* 通过 React Portal 挂载到画中画独立置顶窗口 */}
+        {createPortal(appContent, pipWindow.document.body)}
+      </>
+    );
+  }
+
+  return appContent;
 };

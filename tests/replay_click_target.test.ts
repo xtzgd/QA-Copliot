@@ -233,4 +233,84 @@ describe('回放点击目标定位算法 (findClickTarget) 健壮性验证', () 
       (globalThis as any).document.getElementById = originalGetElementById;
     }
   });
+
+  it('下拉浮层与侧栏同名树节点隔离：当页面左侧存在侧栏“研发部门”，而活动树形下拉浮层中也有“研发部门”时，优先精准匹配下拉浮层选项，绝不误点侧栏', () => {
+    const sidebarNode: any = {
+      tagName: 'DIV',
+      className: 'el-tree-node__content',
+      innerText: '研发部门',
+      textContent: '研发部门',
+      offsetParent: {},
+      getClientRects: () => [{ width: 100, height: 26 }],
+      getAttribute: () => null,
+      closest: (sel: string) => (sel.includes('sidebar') ? {} : null),
+      querySelector: () => null,
+      querySelectorAll: () => [],
+    };
+
+    let optionInPopper: any;
+    const popper: any = {
+      tagName: 'DIV',
+      className: 'el-tree-select__popper el-popper',
+      innerText: '科技 (2)\n深圳总公司 (5)\n研发部门',
+      textContent: '科技 (2)\n深圳总公司 (5)\n研发部门',
+      offsetParent: {},
+      getClientRects: () => [{ width: 200, height: 300 }],
+      getAttribute: (k: string) => (k === 'aria-hidden' ? 'false' : null),
+      style: {},
+      contains: (el: any) => el === optionInPopper,
+      querySelector: (sel: string) => (sel.includes('el-tree-node__content') ? optionInPopper : null),
+      querySelectorAll: (sel: string) => [optionInPopper],
+    };
+
+    optionInPopper = {
+      tagName: 'DIV',
+      className: 'el-tree-node__content',
+      innerText: '研发部门',
+      textContent: '研发部门',
+      offsetParent: {},
+      getClientRects: () => [{ width: 150, height: 26 }],
+      getAttribute: (k: string) => (k === 'role' ? 'treeitem' : null),
+      closest: (sel: string) => (sel.includes('popper') ? popper : null),
+      querySelector: () => null,
+      querySelectorAll: () => [],
+    };
+
+    const originalQuerySelector = (globalThis as any).document.querySelector;
+    const originalQuerySelectorAll = (globalThis as any).document.querySelectorAll;
+    const originalGetElementById = (globalThis as any).document.getElementById;
+
+    try {
+      (globalThis as any).document = {
+        getElementById: () => null,
+        querySelector: () => null,
+        querySelectorAll: (sel: string) => {
+          if (sel.includes('picker')) return [];
+          if (sel.includes('el-tree-select__popper') || sel.includes('el-popper')) {
+            return [popper];
+          }
+          // 在全量 DOM 遍历时，侧栏节点在 DOM 排在前（index 0），浮层节点在后（index 1）
+          return [sidebarNode, optionInPopper];
+        },
+      };
+
+      const payload: ClickEventPayload = {
+        role: 'option',
+        tag: 'DIV',
+        text: '[当前下拉选项] 研发部门',
+        selector: '.el-tree-node__content',
+        url: 'https://test.example.com',
+        timestamp: 100,
+      };
+
+      const target = findClickTarget(payload);
+      // 必须精准命中下拉浮层内的选项节点，绝不能误命中排在 DOM 前面的左侧侧边栏节点
+      expect(target).toBe(optionInPopper);
+      expect(target).not.toBe(sidebarNode);
+    } finally {
+      (globalThis as any).document.querySelector = originalQuerySelector;
+      (globalThis as any).document.querySelectorAll = originalQuerySelectorAll;
+      (globalThis as any).document.getElementById = originalGetElementById;
+    }
+  });
 });

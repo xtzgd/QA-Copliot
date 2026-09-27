@@ -17,6 +17,7 @@ export interface AppConfigExportData {
       aiModel: string;
       aiRemoteEndpoint?: string;
       aiBugAssistanceEnabled: boolean;
+      aiVisionEnabled?: boolean;
     };
     zentao: {
       zentaoBaseUrl: string;
@@ -60,6 +61,7 @@ export async function buildExportPayload(): Promise<string> {
     aiModel: 'deepseek-chat',
     aiRemoteEndpoint: '',
     aiBugAssistanceEnabled: true,
+    aiVisionEnabled: true,
     zentaoBaseUrl: 'https://zentao.hbisscm.com',
     zentaoAuthMode: 'cookie',
     zentaoApiVersion: 'v2',
@@ -99,6 +101,7 @@ export async function buildExportPayload(): Promise<string> {
         aiModel: localRes.aiModel || 'deepseek-chat',
         aiRemoteEndpoint: localRes.aiRemoteEndpoint || localRes.aiBaseUrl || '',
         aiBugAssistanceEnabled: localRes.aiBugAssistanceEnabled !== false,
+        aiVisionEnabled: localRes.aiVisionEnabled !== false,
       },
       zentao: {
         zentaoBaseUrl: localRes.zentaoBaseUrl || 'https://zentao.hbisscm.com',
@@ -171,6 +174,10 @@ export function parseAndValidateConfig(jsonStr: string): ParseResult {
   }
   if ('aiBugAssistanceEnabled' in aiSrc) {
     localSettings.aiBugAssistanceEnabled = aiSrc.aiBugAssistanceEnabled;
+    hasAi = true;
+  }
+  if ('aiVisionEnabled' in aiSrc) {
+    localSettings.aiVisionEnabled = Boolean(aiSrc.aiVisionEnabled);
     hasAi = true;
   }
   if (hasAi) {

@@ -80,22 +80,50 @@ class MockNode {
     return null;
   }
 
-  querySelector(selector: string): MockNode | null {
+  querySelectorAll(selector: string): MockNode[] {
     const targets = selector.split(',').map((s) => s.trim());
+    const result: MockNode[] = [];
     const queue: MockNode[] = [...this.children];
     while (queue.length > 0) {
       const node = queue.shift()!;
+      let matched = false;
       for (const target of targets) {
-        if (target.startsWith('.') && node.className.split(/\s+/).includes(target.slice(1))) return node;
-        if (target.startsWith('input') && node.tagName === 'INPUT') return node;
-        if (target.startsWith('textarea') && node.tagName === 'TEXTAREA') return node;
-        if (target.startsWith('select') && node.tagName === 'SELECT') return node;
-        if (target === 'label' && node.tagName === 'LABEL') return node;
-        if (target === node.tagName.toLowerCase()) return node;
+        if (target.startsWith('.') && node.className.split(/\s+/).includes(target.slice(1))) {
+          matched = true;
+          break;
+        }
+        if (target.startsWith('input') && node.tagName === 'INPUT') {
+          matched = true;
+          break;
+        }
+        if (target.startsWith('textarea') && node.tagName === 'TEXTAREA') {
+          matched = true;
+          break;
+        }
+        if (target.startsWith('select') && node.tagName === 'SELECT') {
+          matched = true;
+          break;
+        }
+        if (target === 'label' && node.tagName === 'LABEL') {
+          matched = true;
+          break;
+        }
+        if (target === node.tagName.toLowerCase()) {
+          matched = true;
+          break;
+        }
+      }
+      if (matched) {
+        result.push(node);
       }
       queue.push(...node.children);
     }
-    return null;
+    return result;
+  }
+
+  querySelector(selector: string): MockNode | null {
+    const all = this.querySelectorAll(selector);
+    return all.length > 0 ? all[0] : null;
   }
 
   contains(other: MockNode): boolean {

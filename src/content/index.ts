@@ -164,14 +164,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'SCAN_FORM_SNAPSHOT') {
     // IMP-04: 非顶层 frame 严格静默忽略，杜绝抢占 sendResponse 导致顶层扫描或填表失败
     if (!isTopFrame) return false;
-    try {
-      const snapshot = FormScanner.scan(document);
-      snapshot.frameId = 0;
-      sendResponse({ snapshot });
-    } catch (error) {
-      sendResponse({ error: `表单扫描失败: ${(error as Error).message}` });
-    }
-    return false;
+    FormScanner.scanWithProbe(document)
+      .then((snapshot) => {
+        snapshot.frameId = 0;
+        sendResponse({ snapshot });
+      })
+      .catch((error) => {
+        sendResponse({ error: `表单扫描失败: ${(error as Error).message}` });
+      });
+    return true;
   }
   if (message?.type === 'EXECUTE_FORM_FILL') {
     // IMP-04: 非顶层 frame 严格静默忽略
@@ -299,12 +300,199 @@ function safeEscapeCss(value: string): string {
   return value.replace(/["\\]/g, '\\$&');
 }
 
+/**
+ * 识别当前页面中所有处于活动/展示状态的弹窗、抽屉与浮层容器
+ */
+function getActiveModalContainers(): HTMLElement[] {
+  const modalSelectors = [
+    'dialog[open]',
+    '.el-overlay:not([style*="display: none"]):not([style*="display:none"]) .el-dialog',
+    '.el-dialog:not([style*="display: none"]):not([style*="display:none"])',
+    '.el-drawer:not([style*="display: none"]):not([style*="display:none"])',
+    '.el-message-box:not([style*="display: none"]):not([style*="display:none"])',
+    '.ant-modal:not([style*="display: none"]):not([style*="display:none"])',
+    '.ant-modal-content',
+    '.ant-drawer:not(.ant-drawer-hidden)',
+    '.arco-modal',
+    '.arco-drawer',
+    '.t-dialog',
+    '.t-drawer',
+    '.n-modal',
+    '.n-drawer',
+    '.modal.show',
+    '.modal.in',
+    '[class*="modal"][class*="open"]',
+    '[class*="dialog"][class*="open"]',
+    '[class*="drawer"][class*="open"]',
+    '[role="dialog"]:not([role="tooltip"]):not(.el-popper):not([class*="popper"]):not([class*="tooltip"])',
+    '[role="alertdialog"]',
+  ];
+
+  const containers: HTMLElement[] = [];
+  try {
+    const rawElements = Array.from(document.querySelectorAll(modalSelectors.join(',')));
+    for (const el of rawElements) {
+      if (!(el instanceof HTMLElement)) continue;
+      if (!isElementVisible(el)) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 50 || rect.height <= 50) continue;
+      if (!containers.some((c) => c.contains(el))) {
+        containers.push(el);
+      }
+    }
+  } catch {}
+  return containers;
+}
+
+function getActiveDropdownPoppers(): HTMLElement[] {
+  const popperSelectors = [
+    // Element Plus / Element UI
+    '.el-select-dropdown:not([style*="display: none"]):not([style*="display:none"])',
+    '.el-cascader__dropdown:not([style*="display: none"]):not([style*="display:none"])',
+    '.el-tree-select__popper:not([style*="display: none"]):not([style*="display:none"])',
+    '.el-select__popper:not([style*="display: none"]):not([style*="display:none"])',
+    '.el-popper:not(.el-tooltip__popper):not([role="tooltip"]):not([style*="display: none"]):not([style*="display:none"])',
+    'div[x-placement]:not([style*="display: none"]):not(.el-tooltip__popper)',
+    'div[data-popper-placement]:not([style*="display: none"]):not(.el-tooltip__popper)',
+    // @riophae/vue-treeselect (若依等管理后台常见组件)
+    '.vue-treeselect__menu-container:not([style*="display: none"])',
+    '.vue-treeselect__portal-container',
+    '.vue-treeselect__menu:not([style*="display: none"])',
+    '[class*="treeselect"][class*="menu"]:not([style*="display: none"])',
+    '[class*="tree-select"][class*="popper"]:not([style*="display: none"])',
+    '[class*="tree-select"][class*="dropdown"]:not([style*="display: none"])',
+    // Ant Design
+    '.ant-select-dropdown:not(.ant-select-dropdown-hidden)',
+    '.ant-select-tree-dropdown:not(.ant-select-tree-dropdown-hidden):not(.ant-select-dropdown-hidden)',
+    '.ant-tree-select-dropdown:not(.ant-select-dropdown-hidden)',
+    '.ant-cascader-menus:not(.ant-cascader-menus-hidden)',
+    // Arco Design
+    '.arco-select-dropdown:not([style*="display: none"]):not([style*="display:none"])',
+    '.arco-tree-select-popup:not([style*="display: none"])',
+    '.arco-trigger-popup:not([style*="display: none"])',
+    // Naive UI / TDesign / Semi
+    '.n-select-menu:not([style*="display: none"])',
+    '.t-select__dropdown:not([style*="display: none"])',
+    '.semi-select-option-list:not([style*="display: none"])',
+    // ARIA Listbox
+    '[role="listbox"]:not([style*="display: none"]):not([style*="display:none"])',
+  ];
+  const poppers: HTMLElement[] = [];
+  try {
+    const raw = Array.from(document.querySelectorAll(popperSelectors.join(',')));
+    for (const el of raw) {
+      if (!el || !isElementVisible(el as Element)) continue;
+      if (typeof el.getAttribute === 'function' && el.getAttribute('aria-hidden') === 'true') continue;
+      const rect = (el as any).getBoundingClientRect?.() ||
+        (typeof (el as any).getClientRects === 'function' && (el as any).getClientRects()[0]) ||
+        { width: 100, height: 100 };
+      if (rect.width <= 20 || rect.height <= 20) continue;
+      if (!poppers.some((p) => p.contains?.(el))) poppers.push(el as HTMLElement);
+    }
+  } catch {}
+  return poppers;
+}
+
+/**
+ * 识别当前页面中所有处于活动/展开展示状态的日期与日历选择器浮层容器
+ */
+function getActiveDatePickerPoppers(): HTMLElement[] {
+  const popperSelectors = [
+    // Element Plus / Element UI
+    '.el-picker__popper:not([style*="display: none"]):not([style*="display:none"])',
+    '.el-picker-panel:not([style*="display: none"]):not([style*="display:none"])',
+    '.el-date-picker:not([style*="display: none"]):not([style*="display:none"])',
+    '.el-date-range-picker:not([style*="display: none"]):not([style*="display:none"])',
+    // Ant Design
+    '.ant-picker-dropdown:not(.ant-picker-dropdown-hidden)',
+    '.ant-picker-panel-container',
+    '.ant-picker-panel',
+    // Arco Design
+    '.arco-picker-popup:not([style*="display: none"]):not([style*="display:none"])',
+    '.arco-picker-panel',
+    // Naive UI
+    '.n-date-panel:not([style*="display: none"]):not([style*="display:none"])',
+    // TDesign
+    '.t-date-picker__panel:not([style*="display: none"]):not([style*="display:none"])',
+    // 通用与常见类名
+    '[class*="date-picker-dropdown"]:not([style*="display: none"])',
+    '[class*="picker-panel"]:not([style*="display: none"])',
+    '[class*="date-table"]:not([style*="display: none"])',
+  ];
+  const poppers: HTMLElement[] = [];
+  try {
+    const raw = Array.from(document.querySelectorAll(popperSelectors.join(',')));
+    for (const el of raw) {
+      if (!el || !isElementVisible(el as Element)) continue;
+      const rect = (el as any).getBoundingClientRect?.() || { width: 100, height: 100 };
+      if (rect.width <= 30 || rect.height <= 30) continue;
+      if (!poppers.some((p) => p.contains(el))) poppers.push(el as HTMLElement);
+    }
+  } catch {}
+  return poppers;
+}
+
+/**
+ * Agent 页面观察节点强引用缓存（借鉴 Midscene nodeCacheMap 机制）
+ * 杜绝规划 ID 与实际 DOM 节点失联导致回退到模糊选择器命中第一个 input 的致命问题
+ */
+const observationElementCache = new Map<string, HTMLElement>();
+
 function collectAiObservation() {
   const selector = [
-    'button', 'a[href]', 'input:not([type="password"]):not([type="hidden"])',
+    'button', 'a[href]', 'input:not([type="hidden"])',
     'textarea', 'select', '[role="button"]', '[role="link"]', '[role="tab"]',
     '[role="checkbox"]', '[role="radio"]', '[role="combobox"]', '[role="option"]',
+    '[role="treeitem"]', '[role="menuitem"]',
+    // 现代 UI 库下拉框组件触发器容器 (Element Plus, Ant Design, Arco, Naive, vue-treeselect 等)
+    '.el-select', '.el-select__wrapper', '.el-cascader', '.el-tree-select',
+    '.ant-select', '.ant-select-selector', '.arco-select', '.n-select',
+    '.vue-treeselect', '.vue-treeselect__control',
+    '[class*="select-trigger"]', '[class*="select__wrapper"]',
+    // 现代 UI 库下拉选项、树节点、级联节点与菜单项
+    '.el-select-dropdown__item', '.ant-select-item-option', '.arco-select-option',
+    '.n-select-option', '.t-select-option',
+    '.vue-treeselect__option', '.vue-treeselect__label',
+    '.ant-select-tree-node-content-wrapper', '.ant-select-tree-title',
+    '.el-tree-node__content', '.el-tree-node', '.el-cascader-node',
+    '.el-select-dropdown li', '[class*="select-dropdown"] li',
   ].join(',');
+
+  const activeModals = getActiveModalContainers();
+  const hasActiveModal = activeModals.length > 0;
+  const activePoppers = getActiveDropdownPoppers();
+  const hasActivePopper = activePoppers.length > 0;
+
+  const allRaw = Array.from(document.querySelectorAll(selector));
+
+  // 关键三层分层优先：
+  // 第一优先级：活动下拉/树形选项浮层（当前用户最直接需要点选的目标）
+  // 第二优先级：活动弹窗/抽屉（当前表单上下文）
+  // 第三优先级：背景页面（仅在未被全屏弹窗完全阻断时作为末尾补充）
+  let orderedCandidates: HTMLElement[];
+  if (hasActiveModal || hasActivePopper) {
+    const popperCandidates: HTMLElement[] = [];
+    const modalCandidates: HTMLElement[] = [];
+    const backgroundCandidates: HTMLElement[] = [];
+    for (const el of allRaw) {
+      if (!el) continue;
+      const inPopper = hasActivePopper && activePoppers.some((p) => p.contains?.(el));
+      const inModal = hasActiveModal && activeModals.some((m) => m.contains?.(el));
+      if (inPopper) {
+        popperCandidates.push(el as HTMLElement);
+      } else if (inModal) {
+        modalCandidates.push(el as HTMLElement);
+      } else {
+        backgroundCandidates.push(el as HTMLElement);
+      }
+    }
+    orderedCandidates = [...popperCandidates, ...modalCandidates, ...backgroundCandidates];
+  } else {
+    orderedCandidates = allRaw.filter((el): el is HTMLElement => Boolean(el));
+  }
+
+  observationElementCache.clear();
+
   const elements: Array<{
     id: string;
     tag: string;
@@ -312,49 +500,155 @@ function collectAiObservation() {
     name?: string;
     text?: string;
     placeholder?: string;
+    value?: string;
     testId?: string;
     ariaLabel?: string;
     selector: string;
     inputType?: string;
     options?: Array<{ label: string; value: string }>;
     disabled?: boolean;
+    inModal?: boolean;
   }> = [];
-  const candidates = Array.from(document.querySelectorAll(selector));
-  for (const [index, element] of candidates.entries()) {
-    if (!(element instanceof HTMLElement) || !isElementVisible(element)) continue;
+
+  for (const [index, element] of orderedCandidates.entries()) {
+    if (!isElementVisible(element)) continue;
     if (element.matches(':disabled, [aria-disabled="true"]')) continue;
     const tag = element.tagName.toLowerCase();
-    if (tag === 'input' && (
-      ['password', 'hidden', 'file'].includes((element as HTMLInputElement).type) ||
-      (element as HTMLInputElement).readOnly
-    )) continue;
+
+    // 只读输入框：若属于下拉框触发器（如 el-select、el-tree-select、el-cascader），绝不能跳过！
+    const isDropdownTrigger = Boolean(
+      element.closest('.el-select, .ant-select, .arco-select, .n-select, .el-cascader, .el-tree-select, .vue-treeselect, [class*="select-trigger"], [class*="select__wrapper"]') ||
+      element.getAttribute('role') === 'combobox' ||
+      element.classList?.contains('el-select__wrapper') ||
+      element.classList?.contains('ant-select-selector')
+    );
+
+    if (tag === 'input') {
+      const inputEl = element as HTMLInputElement;
+      if (inputEl.type === 'hidden' || inputEl.type === 'file') continue;
+      // 真实纯展示不可点只读输入框跳过，下拉框触发器必须保留供点击展开
+      if (inputEl.readOnly && !isDropdownTrigger) continue;
+    }
     if (tag === 'textarea' && (element as HTMLTextAreaElement).readOnly) continue;
     const rect = element.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) continue;
 
+    const inPopper = hasActivePopper && activePoppers.some((p) => p.contains(element));
+    const inModal = activeModals.some((m) => m.contains(element));
+
+    // 严谨判断是否为真正的下拉/树选择项：
+    // 1. 处于活动下拉浮层内，或明确属于已知下拉/树选择/级联选择组件的选项类名/结构
+    // 2. 绝对严禁将页面普通侧边栏、组织机构树（aside, nav, .sidebar 等）的普通 treeitem 误判为下拉选项！
+    const isInSidebar = Boolean(
+      element.closest('aside, nav, .sidebar, .sidebar-container, .left-aside, .org-tree, [class*="sidebar"]')
+    );
+
+    const isDropdownOption = !isInSidebar && (
+      inPopper ||
+      Boolean(
+        element.closest('.el-select-dropdown, .ant-select-dropdown, .arco-select-dropdown, .vue-treeselect__menu, .vue-treeselect__menu-container, .vue-treeselect__portal-container, .el-tree-select__popper, .el-cascader__dropdown, [class*="select-dropdown"], [class*="treeselect__menu"]') ||
+        element.classList?.contains('el-select-dropdown__item') ||
+        element.classList?.contains('ant-select-item-option') ||
+        element.classList?.contains('arco-select-option') ||
+        element.classList?.contains('vue-treeselect__option') ||
+        element.classList?.contains('vue-treeselect__label') ||
+        element.classList?.contains('el-cascader-node') ||
+        (element.getAttribute('role') === 'option' && !element.closest('aside, .sidebar'))
+      )
+    );
+
+    // 如果是包含子级选项项的大容器，避免重复提取上层大容器，只保留具体选项/叶子节点
+    if (isDropdownOption && element.querySelector('.el-select-dropdown__item, .el-tree-node__content, .vue-treeselect__label, [role="option"], [role="treeitem"]')) {
+      continue;
+    }
+
+    const obsId = `el-${index + 1}`;
+    observationElementCache.set(obsId, element);
+    try {
+      element.setAttribute('data-qa-obs-id', obsId);
+    } catch {}
+
+    const intelligentLabel = getElementLabel(element);
     const ariaLabel = element.getAttribute('aria-label') || undefined;
-    const placeholder = element.getAttribute('placeholder') || undefined;
+    const placeholder = element.getAttribute('placeholder') ||
+      element.querySelector('input')?.getAttribute('placeholder') ||
+      element.querySelector('.el-select__placeholder, .ant-select-selection-placeholder, [class*="placeholder"]')?.textContent?.trim() ||
+      undefined;
     const title = element.getAttribute('title') || undefined;
     const labels = 'labels' in element
       ? Array.from((element as HTMLInputElement).labels || []).map((label) => label.innerText.trim()).filter(Boolean).join(' ')
       : '';
-    const name = ariaLabel || labels || placeholder || element.getAttribute('name') || title || undefined;
-    const text = (element.innerText || element.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 120) || undefined;
-    const inferredRole = element.getAttribute('role') || (
-      tag === 'button' ? 'button' : tag === 'a' ? 'link' : tag === 'select' ? 'combobox' :
-      tag === 'textarea' ? 'textbox' : tag === 'input' ? (
-        ['checkbox', 'radio', 'button', 'submit'].includes((element as HTMLInputElement).type)
-          ? (element as HTMLInputElement).type
-          : 'textbox'
-      ) : undefined
-    );
+
+    let name = intelligentLabel || ariaLabel || labels || placeholder || element.getAttribute('name') || title || undefined;
+    const rawText = (element.innerText || element.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+
+    let val: string | undefined;
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+      const isPassword = tag === 'input' && (element as HTMLInputElement).type === 'password';
+      if (!isPassword) {
+        val = (element as HTMLInputElement).value?.trim() || undefined;
+      } else {
+        val = (element as HTMLInputElement).value ? '******' : undefined;
+      }
+    }
+    // 读取现代组件库已选中的回显文字 (如 "科技" 或 "男")
+    if (isDropdownTrigger && !val) {
+      const selectedItemEl = element.querySelector(
+        '.el-select__selected-item, .ant-select-selection-item, .arco-select-view-value, [class*="selected-item"]'
+      );
+      if (selectedItemEl) {
+        const selText = selectedItemEl.textContent?.trim();
+        if (selText && !selText.startsWith('请选择')) {
+          val = selText;
+        }
+      }
+    }
+
+    let text: string | undefined;
+    let inferredRole = element.getAttribute('role') || undefined;
+
+    if (isDropdownOption) {
+      inferredRole = 'option';
+      name = `[当前下拉选项] ${rawText || name || '选项'}`;
+      text = `[当前下拉选项] ${rawText || name || '选项'}`;
+    } else if (isDropdownTrigger) {
+      inferredRole = 'combobox';
+      if (name && !name.includes('下拉框') && !name.includes('选择')) {
+        name = `[下拉框] ${name}`;
+      }
+      text = rawText ? (inModal ? `[弹窗内] ${rawText}` : rawText) : undefined;
+    } else {
+      text = rawText ? (inModal ? `[弹窗内] ${rawText}` : rawText) : undefined;
+      if (!inferredRole) {
+        inferredRole = tag === 'button' ? 'button' : tag === 'a' ? 'link' : tag === 'select' ? 'combobox' :
+          tag === 'textarea' ? 'textbox' : tag === 'input' ? (
+            ['checkbox', 'radio', 'button', 'submit'].includes((element as HTMLInputElement).type)
+              ? (element as HTMLInputElement).type
+              : 'textbox'
+          ) : undefined;
+      }
+    }
+
+    if (inModal && name && !name.startsWith('[弹窗内]') && !name.startsWith('[当前下拉选项]')) {
+      name = `[弹窗内] ${name}`;
+    } else if (!inModal && !inPopper && (hasActiveModal || hasActivePopper) && name) {
+      // 当页面存在弹窗或浮层时，背景元素明确标出 [背景页面]，提示 AI 此时不要误点
+      if (!name.startsWith('[背景页面]')) {
+        name = `[背景页面] ${name}`;
+      }
+      if (text && !text.startsWith('[背景页面]')) {
+        text = `[背景页面] ${text}`;
+      }
+    }
+
     elements.push({
-      id: `el-${index + 1}`,
+      id: obsId,
       tag,
       role: inferredRole,
       name: name?.slice(0, 120),
       text,
       placeholder: placeholder?.slice(0, 120),
+      value: val?.slice(0, 100),
       testId: element.getAttribute('data-testid')?.slice(0, 100) || undefined,
       ariaLabel: ariaLabel?.slice(0, 120),
       selector: getCssSelector(element),
@@ -366,8 +660,33 @@ function collectAiObservation() {
           }))
         : undefined,
       disabled: false,
+      inModal,
     });
-    if (elements.length >= 80) break;
+    // 提升上限至 150，确保弹窗与展开的下拉选项绝不丢失
+    if (elements.length >= 150) break;
+  }
+
+  // 浮层与弹窗文本摘要提取置顶
+  let popperTextSection = '';
+  if (hasActivePopper) {
+    const popperSummaries = activePoppers.map((popper, idx) => {
+      const text = (popper.innerText || popper.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 600);
+      return `【当前展开的下拉/树选择浮层选项 ${idx + 1}】\n${text}`;
+    }).join('\n\n');
+    popperTextSection = `${popperSummaries}\n`;
+  }
+
+  let modalTextSection = '';
+  if (hasActiveModal) {
+    const modalSummaries = activeModals.map((modal, idx) => {
+      const titleEl = modal.querySelector(
+        '.el-dialog__title, .ant-modal-title, .modal-title, [class*="title"], [class*="header"], h1, h2, h3, h4'
+      );
+      const title = titleEl?.textContent?.trim() || `活动弹窗/抽屉 ${idx + 1}`;
+      const text = (modal.innerText || modal.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 1_200);
+      return `【当前活动弹窗: ${title}】\n${text}`;
+    }).join('\n\n');
+    modalTextSection = `${modalSummaries}\n--- 背景页面内容 ---\n`;
   }
 
   const statusText = Array.from(document.querySelectorAll('h1,h2,h3,[role="alert"],[aria-live="polite"],[aria-live="assertive"]'))
@@ -378,7 +697,7 @@ function collectAiObservation() {
   return {
     url: window.location.href,
     title: document.title.slice(0, 160),
-    text: `${statusText}\n${bodyText}`.trim().slice(0, 4_000),
+    text: `${popperTextSection}${modalTextSection}${statusText}\n${bodyText}`.trim().slice(0, 4_000),
     scrollY: window.scrollY,
     scrollX: window.scrollX,
     elements,
@@ -416,8 +735,8 @@ function getCssSelector(el: Element): string {
       const siblings = current.parentElement
         ? Array.from(current.parentElement.children).filter((item) => item.tagName === current?.tagName)
         : [];
-      const isPopperOrOverlay = current.parentElement === document.body || /popper|dropdown|modal|dialog|picker|tooltip/i.test(part);
-      if (siblings.length > 1 && !isPopperOrOverlay) part += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+      const isTopLevelOverlay = current.parentElement === document.body;
+      if (siblings.length > 1 && !isTopLevelOverlay) part += `:nth-of-type(${siblings.indexOf(current) + 1})`;
       parts.unshift(part);
       const candidate = parts.join(' > ');
       if (document.querySelectorAll(candidate).length === 1) return candidate;
@@ -546,6 +865,23 @@ function findByText(tags: string, text?: string): Element | null {
       return true;
     });
     if (visibleMatches.length === 1) return visibleMatches[0];
+    if (visibleMatches.length > 1) {
+      // 若存在活动浮层（下拉/日期）或活动弹窗，优先返回最顶层活动容器内部的匹配项
+      const activeContainers = [
+        ...getActiveDropdownPoppers(),
+        ...getActiveDatePickerPoppers(),
+        ...getActiveModalContainers(),
+      ];
+      for (const container of activeContainers) {
+        const inContainer = visibleMatches.filter((el) => container.contains(el));
+        if (inContainer.length === 1) return inContainer[0];
+        if (inContainer.length > 1) {
+          const leaf = inContainer.find((el) => !inContainer.some((other) => other !== el && el.contains(other)));
+          if (leaf) return leaf;
+          return inContainer[0];
+        }
+      }
+    }
   }
   return null;
 }
@@ -562,8 +898,191 @@ function isElementVisible(el: Element | null): boolean {
   return false;
 }
 
+/**
+ * 针对日期选择器（Date Picker / Date Range Picker）组件及其日历浮层的专门定位器
+ * 准确处理日期数字（1~31）的多月同号、上月末/下月初干扰、日期范围左右面板、快捷按钮等
+ */
+function findDatePickerTarget(payload: ClickEventPayload): Element | null {
+  const activePoppers = getActiveDatePickerPoppers();
+  if (activePoppers.length === 0) return null;
+
+  const expected = (payload.text || '').trim().replace(/\s+/g, ' ');
+  const isDayNumber = /^(?:[1-9]|[12]\d|3[01])$/.test(expected);
+
+  for (const popper of activePoppers) {
+    // 1. 如果查找的是日历中的日期数字 (1 ~ 31)
+    if (isDayNumber) {
+      const preferRight = (payload.selector || '').includes('is-right') ||
+        (payload.xpath || '').includes('content[2]') ||
+        (payload.xpath || '').includes('is-right');
+      const preferLeft = (payload.selector || '').includes('is-left') ||
+        (payload.xpath || '').includes('content[1]') ||
+        (payload.xpath || '').includes('is-left');
+
+      // 提取日历面板中的分月份容器（如范围选择器有左右两边）
+      const panels = Array.from(popper.querySelectorAll(
+        '.el-date-range-picker__content, .el-picker-panel__content, .ant-picker-panel, .arco-picker-panel, table'
+      ));
+
+      let searchContainers: Element[] = [];
+      if (panels.length > 1) {
+        if (preferRight) {
+          searchContainers = [panels[panels.length - 1], ...panels];
+        } else if (preferLeft) {
+          searchContainers = [panels[0], ...panels];
+        } else {
+          searchContainers = panels;
+        }
+      } else if (panels.length === 1) {
+        searchContainers = panels;
+      } else {
+        searchContainers = [popper];
+      }
+
+      for (const container of searchContainers) {
+        // 查找所有候选单元格
+        const cells = Array.from(container.querySelectorAll(
+          'td, [role="gridcell"], .ant-picker-cell, .arco-picker-cell, .n-date-panel-date, .el-date-table-cell'
+        ));
+
+        // 优先筛选非禁用、属于当月（非 prev-month / next-month / out-view）的单元格
+        const validCells = cells.filter((cell) => {
+          const classList = cell.className || '';
+          if (typeof classList === 'string') {
+            if (/\b(?:disabled|is-disabled|ant-picker-cell-disabled)\b/.test(classList)) return false;
+            if (/\b(?:prev-month|next-month|ant-picker-cell-out-view)\b/.test(classList)) return false;
+          }
+          return true;
+        });
+
+        // 在当月有效单元格中精确查找文本等于 expected 的单元格
+        const matchedValid = validCells.find((cell) => {
+          const t = ((cell as HTMLElement).innerText || cell.textContent || '').trim().replace(/\s+/g, ' ');
+          return t === expected;
+        });
+
+        if (matchedValid) {
+          const innerClickable = matchedValid.querySelector('span, div') || matchedValid;
+          return innerClickable;
+        }
+
+        // 次选：如果当月没有匹配，在所有非禁用单元格中查找
+        const fallbackCell = cells.find((cell) => {
+          const classList = cell.className || '';
+          if (typeof classList === 'string' && /\b(?:disabled|is-disabled|ant-picker-cell-disabled)\b/.test(classList)) return false;
+          const t = ((cell as HTMLElement).innerText || cell.textContent || '').trim().replace(/\s+/g, ' ');
+          return t === expected;
+        });
+
+        if (fallbackCell) {
+          const innerClickable = fallbackCell.querySelector('span, div') || fallbackCell;
+          return innerClickable;
+        }
+      }
+    }
+
+    // 2. 如果匹配的是操作按钮或快捷项（如 "确定", "清空", "此刻", "今天", "最近一周"）
+    if (expected) {
+      const buttons = Array.from(popper.querySelectorAll(
+        'button, a, .el-picker-panel__shortcut, [class*="shortcut"], [class*="footer"] button, [class*="btn"], [role="button"]'
+      ));
+      const matchedBtn = buttons.find((btn) => {
+        const t = ((btn as HTMLElement).innerText || btn.textContent || '').trim().replace(/\s+/g, ' ');
+        return t === expected;
+      });
+      if (matchedBtn && isElementVisible(matchedBtn)) return matchedBtn;
+    }
+
+    // 3. 结构 Selector / XPath 在 popper 范围内的查找
+    if (payload.selector) {
+      try {
+        const bySel = popper.querySelector(payload.selector);
+        if (bySel && isElementVisible(bySel)) return bySel;
+      } catch {}
+    }
+  }
+
+  return null;
+}
+
+/**
+ * 针对各类下拉选择与树形下拉（Select / TreeSelect / Cascader）活动浮层的专门定位器
+ * 优先在当前打开的下拉/树选择浮层中精准匹配具体选项节点，彻底阻断误命中页面背景或左侧菜单树
+ */
+function findDropdownOptionTarget(payload: ClickEventPayload): Element | null {
+  const activePoppers = getActiveDropdownPoppers();
+  if (activePoppers.length === 0) return null;
+
+  const expected = (payload.text || '').trim().replace(/\s+/g, ' ');
+  const cleanExpected = expected.replace(/^(\[(?:当前下拉选项|下拉选项|弹窗内|浮层|展开节点|背景页面)\]\s*)+/, '');
+  if (!cleanExpected) return null;
+
+  for (const popper of activePoppers) {
+    if (payload.obsId || payload.id) {
+      const targetId = payload.obsId || payload.id;
+      const byObs = popper.querySelector(`[data-qa-obs-id="${safeEscapeCss(targetId!)}"]`);
+      if (byObs && isElementVisible(byObs)) return byObs;
+    }
+    if (payload.selector) {
+      try {
+        const bySel = popper.querySelector(payload.selector);
+        if (bySel && isElementVisible(bySel)) return bySel;
+      } catch {}
+    }
+
+    const optionCandidateSelectors = [
+      '.el-select-dropdown__item',
+      '.ant-select-item-option',
+      '.arco-select-option',
+      '.n-select-option',
+      '.t-select-option',
+      '.vue-treeselect__option',
+      '.vue-treeselect__label',
+      '.el-tree-node__content',
+      '.el-cascader-node',
+      '.ant-select-tree-node-content-wrapper',
+      '.ant-select-tree-title',
+      '[role="option"]',
+      '[role="treeitem"]',
+      'li',
+      'span',
+      'div',
+    ].join(',');
+
+    const candidates = Array.from(popper.querySelectorAll(optionCandidateSelectors))
+      .filter((el): el is HTMLElement => Boolean(el && isElementVisible(el as Element)));
+
+    // A. 文本严格相等匹配
+    for (const el of candidates) {
+      if (typeof el.querySelector === 'function' && el.querySelector('.el-select-dropdown__item, .el-tree-node__content, .vue-treeselect__label, [role="option"]')) {
+        continue;
+      }
+      const text = ((el as HTMLElement).innerText || el.textContent || '').trim().replace(/\s+/g, ' ');
+      if (text === cleanExpected || text === expected) {
+        return el;
+      }
+    }
+
+    // B. 前缀/包含关系匹配（解决带计数后缀，如 "科技 (2)" 或 "研发部门"）
+    for (const el of candidates) {
+      if (typeof el.querySelector === 'function' && el.querySelector('.el-select-dropdown__item, .el-tree-node__content, .vue-treeselect__label, [role="option"]')) {
+        continue;
+      }
+      const text = ((el as HTMLElement).innerText || el.textContent || '').trim().replace(/\s+/g, ' ');
+      if (text && (text.startsWith(cleanExpected) || cleanExpected.startsWith(text) || text.includes(cleanExpected))) {
+        return el;
+      }
+    }
+  }
+
+  return null;
+}
+
 export function findClickTarget(payload: ClickEventPayload): Element | null {
-  const isOption = payload.role === 'option' || payload.tag === 'OPTION';
+  const isOption = payload.role === 'option' ||
+    payload.tag === 'OPTION' ||
+    Boolean(payload.text && /\[(?:当前下拉选项|下拉选项)\]/.test(payload.text)) ||
+    Boolean(payload.selector && /select-dropdown|ant-select-item|arco-select-option|vue-treeselect|tree-select/i.test(payload.selector));
   const isInputField = Boolean(payload.isInput || ['INPUT', 'TEXTAREA', 'SELECT'].includes(payload.tag?.toUpperCase() || ''));
 
   const expected = (payload.text || '').trim().replace(/\s+/g, ' ');
@@ -573,20 +1092,100 @@ export function findClickTarget(payload: ClickEventPayload): Element | null {
     if (!element) return false;
     if (isInputField) return true;
     if (!expected) return true;
+    const cleanExpected = expected.replace(/^(\[(?:当前下拉选项|下拉选项|弹窗内|浮层|展开节点|背景页面)\]\s*)+/, '');
     const actual = ((element as HTMLElement).innerText || element.textContent || '').trim().replace(/\s+/g, ' ');
-    if (actual === expected) return true;
+    const cleanActual = actual.replace(/^(\[(?:当前下拉选项|下拉选项|弹窗内|浮层|展开节点|背景页面)\]\s*)+/, '');
+    if (actual === expected || actual === cleanExpected || cleanActual === cleanExpected || cleanActual === expected) return true;
     if (mode === 'exact') return false;
 
     // 宽松/子串匹配（解决菜单展开/收起、截断40字符、多级子文本拼接等情况）
-    if (actual && expected) {
-      if (actual.includes(expected) || expected.includes(actual)) return true;
-      if (expected.startsWith(actual) || actual.startsWith(expected)) return true;
-      if (expectedFirstLine && (actual === expectedFirstLine || actual.includes(expectedFirstLine) || expectedFirstLine.includes(actual))) {
+    if (actual && (expected || cleanExpected)) {
+      if (cleanActual.includes(cleanExpected) || cleanExpected.includes(cleanActual)) return true;
+      if (actual.includes(cleanExpected) || cleanExpected.includes(actual)) return true;
+      if (cleanExpected.startsWith(cleanActual) || cleanActual.startsWith(cleanExpected)) return true;
+      if (expectedFirstLine && (cleanActual === expectedFirstLine || cleanActual.includes(expectedFirstLine) || expectedFirstLine.includes(cleanActual))) {
         return true;
       }
     }
     return false;
   };
+
+  // 0. 最高优先级：Agent 观察节点缓存 / ID 精准匹配（借鉴 Midscene nodeCacheMap 机制）
+  const targetObsId = payload.obsId || payload.id;
+  if (targetObsId) {
+    const cached = observationElementCache.get(targetObsId);
+    if (cached && document.contains(cached) && isElementVisible(cached)) {
+      const activePoppers = getActiveDropdownPoppers();
+      const inPopper = activePoppers.some((p) => p.contains(cached));
+      // 安全拦截：如果当前页面存在活动的下拉浮层且动作针对下拉选项，但缓存节点不在浮层内（例如误中了背景侧栏），
+      // 放弃该缓存，转入下拉浮层专用匹配，杜绝误点击背景侧栏
+      if (isOption && activePoppers.length > 0 && !inPopper) {
+        console.warn('[QA Copilot] 观察节点缓存命中了非浮层背景节点，转为下拉浮层精准匹配');
+      } else {
+        return cached;
+      }
+    }
+    try {
+      const byDataAttr = document.querySelector(`[data-qa-obs-id="${safeEscapeCss(targetObsId)}"]`);
+      if (byDataAttr && isElementVisible(byDataAttr as HTMLElement)) {
+        const activePoppers = getActiveDropdownPoppers();
+        const inPopper = activePoppers.some((p) => p.contains(byDataAttr));
+        if (isOption && activePoppers.length > 0 && !inPopper) {
+          // 转向下拉浮层匹配
+        } else {
+          return byDataAttr as HTMLElement;
+        }
+      }
+    } catch {}
+  }
+
+  // 0.05 下拉选项优先：若当前页面存在活动下拉/树形选择浮层，优先在浮层中精准匹配选项
+  const dropdownOptionTarget = findDropdownOptionTarget(payload);
+  if (dropdownOptionTarget) return dropdownOptionTarget;
+
+  // 0.1 日历与日期选择器优先：若页面上存在活动日历浮层，优先从日历浮层中精准匹配单元格或控制项
+  const dateTarget = findDatePickerTarget(payload);
+  if (dateTarget) return dateTarget;
+
+  // 1. 弹窗优先：如果页面存在活动弹窗，优先在弹窗容器内查找匹配控件
+  const activeModals = getActiveModalContainers();
+  if (activeModals.length > 0) {
+    const cleanExpected = expected.replace(/^(\[(?:当前下拉选项|下拉选项|弹窗内|浮层|展开节点|背景页面)\]\s*)+/, '');
+    for (const modal of activeModals) {
+      if (payload.id) {
+        const byId = modal.querySelector(`#${safeEscapeCss(payload.id)}`);
+        if (byId && matchesText(byId, 'partial')) return byId;
+      }
+      if (payload.testId) {
+        const byTestId = modal.querySelector(`[data-testid="${safeEscapeCss(payload.testId)}"]`);
+        if (byTestId && matchesText(byTestId, 'partial')) return byTestId;
+      }
+      if (payload.name) {
+        const cleanName = payload.name.replace(/^(\[(?:当前下拉选项|下拉选项|弹窗内|浮层|展开节点|背景页面)\]\s*)+/, '');
+        const byName = modal.querySelector(`[name="${safeEscapeCss(cleanName)}"], [name="${safeEscapeCss(payload.name)}"]`);
+        if (byName && matchesText(byName, 'partial')) return byName;
+      }
+      if (payload.ariaLabel) {
+        const cleanAria = payload.ariaLabel.replace(/^(\[(?:当前下拉选项|下拉选项|弹窗内|浮层|展开节点|背景页面)\]\s*)+/, '');
+        const byAriaLabel = modal.querySelector(`[aria-label="${safeEscapeCss(cleanAria)}"], [aria-label="${safeEscapeCss(payload.ariaLabel)}"]`);
+        if (byAriaLabel && matchesText(byAriaLabel, 'partial')) return byAriaLabel;
+      }
+      if (payload.selector) {
+        try {
+          const bySel = modal.querySelector(payload.selector);
+          if (bySel && matchesText(bySel, 'partial')) return bySel;
+        } catch {}
+      }
+      if (cleanExpected) {
+        const modalButtons = Array.from(modal.querySelectorAll('button, a, option, li, [role="button"], [role="option"], [role="menuitem"], input[type="button"], input[type="submit"]'));
+        const matchedBtn = modalButtons.find((el) => {
+          const t = ((el as HTMLElement).innerText || el.textContent || '').trim().replace(/\s+/g, ' ');
+          return t === cleanExpected || t === expected;
+        });
+        if (matchedBtn) return matchedBtn;
+      }
+    }
+  }
 
   if (payload.id) {
     const byId = document.getElementById(payload.id);
@@ -612,6 +1211,12 @@ export function findClickTarget(payload: ClickEventPayload): Element | null {
   // 1. 优先精准文本匹配
   const byText = findByText('button, a, option, li, [role="button"], [role="option"], [role="menuitem"]', expected);
   if (byText) return byText;
+
+  // 1.1 单元格与文本节点保底匹配（支持日历单元格、表格单元格等 td/span/div 控件）
+  if (expected) {
+    const byCellText = findByText('td, span, div, [role="gridcell"]', expected);
+    if (byCellText) return byCellText;
+  }
 
   // 2. 首行文本匹配（如多行文本中提取第一行主标题进行精准匹配）
   if (expectedFirstLine && expectedFirstLine !== expected) {
@@ -702,6 +1307,84 @@ function findInputTarget(payload: InputEventPayload): HTMLInputElement | HTMLTex
   const isCheckable = payload.inputType === 'radio' || payload.inputType === 'checkbox';
   const name = payload.name || payload.fieldName;
   const targetOptionValue = payload.optionValue || (payload.value !== '已选中' && payload.value !== '未选中' ? payload.value : undefined);
+
+  // 0. 最高优先级：Agent 观察节点缓存 / ID 精准匹配（借鉴 Midscene nodeCacheMap 机制）
+  const targetObsId = payload.obsId || payload.id;
+  if (targetObsId) {
+    const cached = observationElementCache.get(targetObsId);
+    if (cached && document.contains(cached) && isElementVisible(cached)) {
+      if (cached instanceof HTMLInputElement || cached instanceof HTMLTextAreaElement || cached instanceof HTMLSelectElement) {
+        return cached;
+      }
+      const nested = cached.querySelector('input, textarea, select');
+      if (nested instanceof HTMLInputElement || nested instanceof HTMLTextAreaElement || nested instanceof HTMLSelectElement) {
+        return nested;
+      }
+    }
+    try {
+      const byDataAttr = document.querySelector(`[data-qa-obs-id="${safeEscapeCss(targetObsId)}"]`);
+      if (byDataAttr && isElementVisible(byDataAttr as HTMLElement)) {
+        if (byDataAttr instanceof HTMLInputElement || byDataAttr instanceof HTMLTextAreaElement || byDataAttr instanceof HTMLSelectElement) {
+          return byDataAttr;
+        }
+        const nested = byDataAttr.querySelector('input, textarea, select');
+        if (nested instanceof HTMLInputElement || nested instanceof HTMLTextAreaElement || nested instanceof HTMLSelectElement) {
+          return nested;
+        }
+      }
+    } catch {}
+  }
+
+  // 1. 弹窗优先：如果页面存在活动弹窗，优先在弹窗容器内查找输入控件
+  const activeModals = getActiveModalContainers();
+  if (activeModals.length > 0) {
+    for (const modal of activeModals) {
+      if (payload.id) {
+        const byId = modal.querySelector(`#${safeEscapeCss(payload.id)}`);
+        if (byId instanceof HTMLInputElement || byId instanceof HTMLTextAreaElement || byId instanceof HTMLSelectElement) {
+          return byId;
+        }
+      }
+      if (payload.placeholder) {
+        const cleanPh = payload.placeholder.replace(/^\[弹窗内\]\s*/, '');
+        const byPh = modal.querySelector(`[placeholder="${safeEscapeCss(cleanPh)}"], [placeholder="${safeEscapeCss(payload.placeholder)}"]`);
+        if (byPh instanceof HTMLInputElement || byPh instanceof HTMLTextAreaElement || byPh instanceof HTMLSelectElement) {
+          return byPh;
+        }
+      }
+      if (name) {
+        const cleanName = name.replace(/^\[弹窗内\]\s*/, '');
+        const byName = modal.querySelector(`[name="${safeEscapeCss(cleanName)}"], [name="${safeEscapeCss(name)}"]`);
+        if (byName instanceof HTMLInputElement || byName instanceof HTMLTextAreaElement || byName instanceof HTMLSelectElement) {
+          return byName;
+        }
+      }
+      if (payload.fieldLabel) {
+        const cleanLabel = payload.fieldLabel.replace(/^\[弹窗内\]\s*/, '');
+        const matchedLabel = Array.from(modal.querySelectorAll('label')).find((l) => {
+          const t = l.textContent?.trim();
+          return t === cleanLabel || t === payload.fieldLabel;
+        });
+        if (matchedLabel) {
+          if (matchedLabel.control && (matchedLabel.control instanceof HTMLInputElement || matchedLabel.control instanceof HTMLTextAreaElement || matchedLabel.control instanceof HTMLSelectElement)) {
+            return matchedLabel.control;
+          }
+          const nested = matchedLabel.querySelector('input, textarea, select');
+          if (nested instanceof HTMLInputElement || nested instanceof HTMLTextAreaElement || nested instanceof HTMLSelectElement) {
+            return nested;
+          }
+        }
+      }
+      if (payload.selector) {
+        try {
+          const bySel = modal.querySelector(payload.selector);
+          if (bySel instanceof HTMLInputElement || bySel instanceof HTMLTextAreaElement || bySel instanceof HTMLSelectElement) {
+            return bySel;
+          }
+        } catch {}
+      }
+    }
+  }
 
   // 1. 如果有明确 id，优先根据 id 查找
   if (payload.id) {
@@ -876,7 +1559,10 @@ function isOptionEvent(event: QAEvent): boolean {
     p?.selector?.includes('el-select-dropdown') ||
     p?.selector?.includes('ant-select-dropdown') ||
     p?.selector?.includes('select-item') ||
-    p?.selector?.includes('dropdown-menu')
+    p?.selector?.includes('dropdown-menu') ||
+    p?.selector?.includes('vue-treeselect') ||
+    p?.selector?.includes('tree-select') ||
+    Boolean(p?.text && /\[(?:当前下拉选项|下拉选项)\]/.test(p.text))
   );
 }
 
@@ -911,6 +1597,77 @@ function tryHealAndOpenDropdown(event: QAEvent): boolean {
         if (isElementVisible(cand)) {
           const trigger = (cand.querySelector('.el-select__wrapper, .select-trigger, .ant-select-selector, input') || cand) as HTMLElement;
           console.warn(`[QA Copilot Replay] 页面无展开浮层，触发候选下拉框自愈展开`);
+          dispatchClick(trigger);
+          return true;
+        }
+      }
+    }
+  } catch {}
+  return false;
+}
+
+export function isDatePickerEvent(event: QAEvent): boolean {
+  if (event.type !== 'click') return false;
+  const p = event.payload as ClickEventPayload;
+  if (!p) return false;
+
+  const selector = (p.selector || '').toLowerCase();
+  const xpath = (p.xpath || '').toLowerCase();
+  const isDateSelector = /picker|date|calendar|month-table|year-table|time-panel|datetime|range-picker|el-date|ant-picker/i.test(selector) ||
+    /picker|date|calendar|month-table|year-table|time-panel|datetime|range-picker/i.test(xpath);
+
+  const text = (p.text || '').trim();
+  const desc = (event.description || '').toLowerCase();
+  const title = (event.title || '').toLowerCase();
+  const isDateLabel = Boolean(
+    p.fieldLabel && /日期|时间|date|time/i.test(p.fieldLabel)
+  );
+  const isDateTextOrDesc = /日期|时间|date|time|开始日期|结束日期/i.test(desc) || /日期|时间|date|time/i.test(title);
+  const isDayNumber = /^(?:[1-9]|[12]\d|3[01])$/.test(text);
+
+  return Boolean(
+    isDateSelector ||
+    p.isDatePicker ||
+    (isDayNumber && (isDateLabel || isDateTextOrDesc || isDateSelector))
+  );
+}
+
+function tryHealAndOpenDatePicker(event: QAEvent): boolean {
+  try {
+    const p = event.payload as ClickEventPayload;
+
+    // 1. 如果有关联的 fieldLabel（如“创建时间”、“开始日期”），在页面上定位包含该标签的表单项中的日期控件
+    if (p?.fieldLabel) {
+      const formItems = Array.from(document.querySelectorAll(
+        '.el-form-item, .ant-form-item, .arco-form-item, .n-form-item, [class*="form-item"]'
+      ));
+      for (const item of formItems) {
+        const text = (item.textContent || '').trim();
+        if (text.includes(p.fieldLabel)) {
+          const dateTrigger = item.querySelector(
+            '.el-date-editor, .el-range-editor, .ant-picker, .arco-picker, input.el-range-input, input[placeholder*="日期"], input[placeholder*="时间"], [class*="picker"]'
+          ) as HTMLElement | null;
+          if (dateTrigger && isElementVisible(dateTrigger)) {
+            console.warn(`[QA Copilot Replay] 触发前置表单项「${p.fieldLabel}」日期选择器自愈展开`);
+            dispatchClick(dateTrigger);
+            return true;
+          }
+        }
+      }
+    }
+
+    // 2. 检查页面上是否存在已有的日期选择器输入框或范围触发器
+    const activeDatePopper = document.querySelector(
+      '.el-picker__popper:not([style*="display: none"]), .el-picker-panel:not([style*="display: none"]), .ant-picker-dropdown:not(.ant-picker-dropdown-hidden), [class*="date-picker-dropdown"]:not([style*="display: none"])'
+    );
+    if (!activeDatePopper) {
+      const candidates = Array.from(document.querySelectorAll(
+        '.el-date-editor, .el-range-editor, .ant-picker, .arco-picker, input.el-range-input, input[placeholder*="开始日期"], input[placeholder*="日期"], input[placeholder*="时间"]'
+      ));
+      for (const cand of candidates) {
+        if (isElementVisible(cand)) {
+          const trigger = (cand.querySelector('input') || cand) as HTMLElement;
+          console.warn(`[QA Copilot Replay] 页面无展开日历浮层，触发候选日期组件自愈展开`);
           dispatchClick(trigger);
           return true;
         }
@@ -997,6 +1754,7 @@ async function waitForReplayTarget(event: QAEvent, replayId?: string | null): Pr
   let lastFoundHiddenTarget: HTMLElement | null = null;
   const isScrollEvent = event.type === 'scroll';
   const isOption = isOptionEvent(event);
+  const isDate = isDatePickerEvent(event);
   const maxAttempts = isScrollEvent ? 15 : 80;
   let hiddenFoundCount = 0;
   let attemptedHeal = false;
@@ -1029,6 +1787,13 @@ async function waitForReplayTarget(event: QAEvent, replayId?: string | null): Pr
       // 若节点已在 DOM 中且尝试多次展开依然未展示（如需要穿透点击的下拉选项），在约 1.5 秒后收敛交付 replayAction 处理
       if (hiddenFoundCount >= 15) {
         break;
+      }
+    } else if (isDate && !attemptedHeal && (attempt === 3 || attempt === 8)) {
+      // 关键自愈：如果是在找日历/日期选项，且当前页面日历浮层未展开，自愈点击对应日期输入框展开
+      const healed = tryHealAndOpenDatePicker(event);
+      if (healed) {
+        attemptedHeal = true;
+        await new Promise((resolve) => setTimeout(resolve, 300));
       }
     } else if (isOption && !attemptedHeal && (attempt === 3 || attempt === 8)) {
       // 关键自愈：如果是在找下拉选项，且当前 DOM 中根本找不到该选项节点，说明下拉框未展开导致选项未挂载
@@ -1120,10 +1885,16 @@ export async function replayAction(
         (event.payload as ClickEventPayload)?.role === 'option' ||
         htmlTarget.getAttribute('role') === 'option' ||
         htmlTarget.classList?.contains('el-select-dropdown__item') ||
-        htmlTarget.closest?.('.el-select-dropdown, .ant-select-dropdown, [class*="select-dropdown"]')
+        htmlTarget.classList?.contains('vue-treeselect__option') ||
+        htmlTarget.classList?.contains('vue-treeselect__label') ||
+        htmlTarget.closest?.('.el-select-dropdown, .ant-select-dropdown, .vue-treeselect__menu, .vue-treeselect__menu-container, .vue-treeselect__portal-container, .el-tree-select__popper, [class*="select-dropdown"], [class*="treeselect"]')
       );
-      if (isDropdownOption) {
-        console.warn(`[QA Copilot Replay] 下拉选项处于隐藏折叠中，执行穿透点击以触发组件选中: ${event.description}`);
+      const isDateCell = Boolean(
+        isDatePickerEvent(event) ||
+        htmlTarget.closest?.('.el-picker-panel, .el-date-picker, .el-date-range-picker, .ant-picker-dropdown, .arco-picker-popup, [class*="date-table"]')
+      );
+      if (isDropdownOption || isDateCell) {
+        console.warn(`[QA Copilot Replay] 日期选项/下拉选项处于特殊渲染层，执行穿透点击以触发组件选中: ${event.description}`);
         try {
           // A genuinely hidden option has no physical hit target, so this
           // virtualized-menu case keeps the existing DOM click fallback.
@@ -1135,9 +1906,11 @@ export async function replayAction(
     }
   }
 
-  htmlTarget.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
-  const previousOutline = htmlTarget.style.outline;
-  htmlTarget.style.outline = '3px solid #22c55e';
+  htmlTarget.scrollIntoView?.({ behavior: 'auto', block: 'center', inline: 'center' });
+  const previousOutline = htmlTarget.style?.outline || '';
+  if (htmlTarget.style) {
+    htmlTarget.style.outline = '3px solid #22c55e';
+  }
 
   replayDispatching = true;
   replaySuppressedUntil = Date.now() + 1_000;
@@ -1338,6 +2111,22 @@ document.addEventListener(
       const selector = getCssSelector(effectiveTarget);
       const description = customDesc || (text ? `点击「${text}」` : `点击 ${selector}`);
 
+      // 智能识别是否点击了日历/日期组件浮层中的内容
+      const inDatePicker = Boolean(
+        target.closest?.(
+          '.el-picker__popper, .el-picker-panel, .el-date-picker, .el-date-range-picker, .ant-picker-dropdown, .arco-picker-popup, .n-date-panel, [class*="date-table"], [class*="picker-panel"]'
+        )
+      );
+      let dateFieldLabel = fieldLabel;
+      if (inDatePicker && !dateFieldLabel) {
+        const activeDateTrigger = document.querySelector(
+          '.el-date-editor.is-active, .el-range-editor.is-active, .el-input.is-focus, .ant-picker-focused, .arco-picker-focused, [class*="date"].is-active'
+        );
+        if (activeDateTrigger) {
+          dateFieldLabel = getElementLabel(activeDateTrigger) || undefined;
+        }
+      }
+
       sendToBackground({
         type: 'RECORD_EVENT',
         payload: {
@@ -1358,9 +2147,10 @@ document.addEventListener(
               testId: effectiveTarget.getAttribute?.('data-testid') || undefined,
               ariaLabel: effectiveTarget.getAttribute?.('aria-label') || undefined,
               title: effectiveTarget.getAttribute?.('title') || undefined,
-              fieldLabel,
+              fieldLabel: dateFieldLabel || fieldLabel,
               placeholder: effectiveTarget.getAttribute?.('placeholder') || undefined,
               isInput,
+              isDatePicker: inDatePicker || undefined,
               selector,
               xpath: getXPath(effectiveTarget),
               x: event.clientX,

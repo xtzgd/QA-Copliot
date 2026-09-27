@@ -63,6 +63,7 @@ interface AppState {
   startSession: (title?: string) => Promise<void>;
   stopSession: () => Promise<void>;
   updateSessionTitle: (sessionId: string, newTitle: string) => Promise<void>;
+  deleteSession: (sessionId: string) => Promise<void>;
   triggerSnapshot: () => Promise<void>;
   handleIncomingEvent: (event: QAEvent, stats: TestSession['stats']) => void;
   handleIncomingNetwork: (req: NetworkRequest, timelineEvent: QAEvent, stats: TestSession['stats']) => void;
@@ -146,11 +147,21 @@ export const useAppStore = create<AppState>((set, get) => ({
   initSession: async () => {
     await get().reloadProjectConfig();
     await get().refreshActiveTask();
-    // 获取历史会话列表
-    const [past, latestSnapshot] = await Promise.all([
+    // 获取历史会话列表并智能清洗遗留的 (商城系统-TEST) 等默认占位符后缀
+    const [rawPast, latestSnapshot] = await Promise.all([
       sessionRepo.listRecent(10),
       snapshotRepo.getLatestSnapshot(),
     ]);
+    const past = rawPast.map((s) => {
+      if (s.title && s.title.includes('商城系统')) {
+        const cleaned = s.title.replace(/\s*\((?:商城系统|默认项目)[-_]?(?:TEST|DEV|UAT|PROD)?\)/gi, '').trim();
+        if (cleaned && cleaned !== s.title) {
+          sessionRepo.updateTitle(s.id, cleaned).catch(() => {});
+          return { ...s, title: cleaned };
+        }
+      }
+      return s;
+    });
     set({ pastSessions: past, currentSnapshot: latestSnapshot || null });
 
     // 1. 获取当前活动会话
@@ -187,12 +198,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  startSession: async (title) => {
+  startSession: async (title?: string) => {
     const { selectedProject, selectedEnvironment, currentUrl, projects } = get();
     const projectId = projects.find((project) => project.name === selectedProject)?.id || 'proj-default';
     set({ isCapturing: true });
 
-    // 方案 3：智能生成会话标题。若未显式指定，优先提取页面标题 + (项目-环境)
+    // 智能生成会话标题：优先提取真实页面标题（如「外骨骼设备管理系统」），不再硬编码拼接 (商城系统-TEST) 演示后缀
     let sessionTitle = title;
     if (!sessionTitle && typeof chrome !== 'undefined' && chrome.tabs?.query) {
       try {
@@ -206,13 +217,15 @@ export const useAppStore = create<AppState>((set, get) => ({
           !cleanTitle.startsWith('https://') &&
           cleanTitle !== 'New Tab';
         if (isValidTitle) {
-          const shortTitle = cleanTitle.length > 24 ? `${cleanTitle.slice(0, 24)}…` : cleanTitle;
-          sessionTitle = `${shortTitle} (${selectedProject}-${selectedEnvironment})`;
+          const shortTitle = cleanTitle.length > 28 ? `${cleanTitle.slice(0, 28)}…` : cleanTitle;
+          const isDefaultDemoProject = !selectedProject || selectedProject === '商城系统' || selectedProject === '默认项目';
+          sessionTitle = isDefaultDemoProject ? shortTitle : `${shortTitle} (${selectedProject}-${selectedEnvironment})`;
         }
       } catch {}
     }
     if (!sessionTitle) {
-      sessionTitle = `${selectedProject} (${selectedEnvironment})`;
+      const isDefaultDemoProject = !selectedProject || selectedProject === '商城系统' || selectedProject === '默认项目';
+      sessionTitle = isDefaultDemoProject ? '未命名测试会话' : `${selectedProject} (${selectedEnvironment})`;
     }
 
     const res = await sendToBackground<{ session?: TestSession; error?: string }>({
@@ -273,6 +286,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({
       pastSessions: pastSessions.map((s) => (s.id === sessionId ? { ...s, title: trimmed } : s)),
       toastMessage: '会话名称已更新',
+    });
+  },
+
+  deleteSession: async (sessionId: string) => {
+    await sessionRepo.deleteWithEvidence(sessionId);
+    const { activeSession, pastSessions } = get();
+    if (activeSession && activeSession.id === sessionId) {
+      set({ activeSession: null, events: [], networkRequests: [], recentAnomalies: [] });
+    }
+    set({
+      pastSessions: pastSessions.filter((s) => s.id !== sessionId),
+      toastMessage: '测试会话已删除',
     });
   },
 

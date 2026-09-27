@@ -57,4 +57,5 @@ export interface BrowserAgentContext {
   observations: WebFrameObservation[];
   history: string[];
   mode: 'act' | 'assert';
+  screenshotUrl?: string; // 页面视口多模态截图 (data:image/jpeg;base64,... 或 http URL)
 }

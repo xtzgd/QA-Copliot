@@ -10,7 +10,7 @@ describe('Locator 生成器', () => {
     });
 
     expect(btn.strategy).toBe('role');
-    expect(btn.recommended).toBe("page.getByRole('button', { name: '提交订单' })");
+    expect(btn.recommended).toBe('page.getByRole("button", { name: "提交订单" })');
   });
 
   it('含有 testId 时优先推荐 getByTestId', () => {
@@ -21,13 +21,13 @@ describe('Locator 生成器', () => {
     });
 
     expect(field.strategy).toBe('testid');
-    expect(field.recommended).toBe("page.getByTestId('user-phone-input')");
+    expect(field.recommended).toBe('page.getByTestId("user-phone-input")');
   });
 
   it('优先使用表单 Label 并转义单引号', () => {
     const field = LocatorGenerator.generate({ tag: 'input', label: "客户's Name", id: 'customer' });
     expect(field.strategy).toBe('label');
-    expect(field.recommended).toBe("page.getByLabel('客户\\'s Name')");
+    expect(field.recommended).toBe('page.getByLabel("客户\'s Name")');
   });
 
 });

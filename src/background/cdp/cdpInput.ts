@@ -5,9 +5,11 @@ export class CdpInputSession {
   private attachedTabId: number | null = null;
 
   constructor() {
-    chrome.debugger.onDetach.addListener((source) => {
-      if (source.tabId === this.attachedTabId) this.attachedTabId = null;
-    });
+    if (typeof chrome !== 'undefined' && chrome.debugger?.onDetach?.addListener) {
+      chrome.debugger.onDetach.addListener((source) => {
+        if (source.tabId === this.attachedTabId) this.attachedTabId = null;
+      });
+    }
   }
 
   get isAttached(): boolean {
