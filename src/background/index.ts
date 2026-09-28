@@ -210,7 +210,7 @@ async function collectAgentObservations(tabId: number): Promise<WebFrameObservat
         text: (result.text || '').slice(0, 4_000),
         scrollY: Number(result.scrollY || 0),
         scrollX: Number(result.scrollX || 0),
-        elements: (result.elements || []).slice(0, 100).map((element) => ({
+        elements: (result.elements || []).slice(0, 150).map((element) => ({
           ...element,
           id: `${frame.frameId}:${element.id}`,
         })),
@@ -221,9 +221,9 @@ async function collectAgentObservations(tabId: number): Promise<WebFrameObservat
   }));
   const found = observations.filter((item): item is WebFrameObservation => Boolean(item));
   if (found.length === 0) throw new Error('无法读取当前页面，请确认页面已加载且允许 QA Copilot 注入脚本');
-  let remainingElements = 150;
+  let remainingElements = 200;
   return found.map((frame) => {
-    const elements = frame.elements.slice(0, Math.min(100, remainingElements));
+    const elements = frame.elements.slice(0, Math.min(150, remainingElements));
     remainingElements -= elements.length;
     return { ...frame, elements };
   });

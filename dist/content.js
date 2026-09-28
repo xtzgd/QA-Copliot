@@ -3071,10 +3071,35 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     const activePoppers = getActiveDropdownPoppers();
     const hasActivePopper = activePoppers.length > 0;
     const allRaw = Array.from(document.querySelectorAll(selector));
+    const isHeaderEl = (el) => {
+      var _a2;
+      return Boolean(
+        (_a2 = el.closest) == null ? void 0 : _a2.call(el, "header, .navbar, .top-bar, .topbar, .right-menu, .header-tools, .header-right, #screenfull, #size-select, .global-header, .ant-layout-header, .el-header")
+      );
+    };
+    const isSidebarEl = (el) => {
+      var _a2;
+      return Boolean(
+        (_a2 = el.closest) == null ? void 0 : _a2.call(el, "aside, nav, .sidebar, .sidebar-container, .left-aside, .ant-layout-sider, .el-aside")
+      );
+    };
+    const isTreeSideEl = (el) => {
+      var _a2;
+      return Boolean(
+        (_a2 = el.closest) == null ? void 0 : _a2.call(el, ".org-tree, .dept-tree, .left-tree, .tree-container, .aside-tree")
+      );
+    };
+    const isMainActionOrContent = (el) => {
+      var _a2;
+      return Boolean(
+        (_a2 = el.closest) == null ? void 0 : _a2.call(el, 'main, [role="main"], .app-main, .main-content, #app-main, .content-container, .page-container, .ant-layout-content, .el-main, .table-toolbar, .action-bar, .handle-box, .crud-opts, .toolbar')
+      );
+    };
     let orderedCandidates;
     if (hasActiveModal || hasActivePopper) {
       const popperCandidates = [];
       const modalCandidates = [];
+      const mainCandidates = [];
       const backgroundCandidates = [];
       for (const el of allRaw) {
         if (!el) continue;
@@ -3090,13 +3115,40 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
           popperCandidates.push(el);
         } else if (inModal) {
           modalCandidates.push(el);
+        } else if (isMainActionOrContent(el)) {
+          mainCandidates.push(el);
         } else {
           backgroundCandidates.push(el);
         }
       }
-      orderedCandidates = [...popperCandidates, ...modalCandidates, ...backgroundCandidates];
+      orderedCandidates = [...popperCandidates, ...modalCandidates, ...mainCandidates, ...backgroundCandidates];
     } else {
-      orderedCandidates = allRaw.filter((el) => Boolean(el));
+      const mainCandidates = [];
+      const treeCandidates = [];
+      const sidebarCandidates = [];
+      const headerCandidates = [];
+      const otherCandidates = [];
+      for (const el of allRaw) {
+        if (!el) continue;
+        if (isHeaderEl(el)) {
+          headerCandidates.push(el);
+        } else if (isSidebarEl(el)) {
+          sidebarCandidates.push(el);
+        } else if (isTreeSideEl(el)) {
+          treeCandidates.push(el);
+        } else if (isMainActionOrContent(el)) {
+          mainCandidates.push(el);
+        } else {
+          otherCandidates.push(el);
+        }
+      }
+      orderedCandidates = [
+        ...mainCandidates,
+        ...otherCandidates,
+        ...treeCandidates.slice(0, 15),
+        ...sidebarCandidates,
+        ...headerCandidates
+      ];
     }
     observationElementCache.clear();
     const elements = [];
@@ -3132,13 +3184,26 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         element.setAttribute("data-qa-obs-id", obsId);
       } catch {
       }
-      const intelligentLabel = getElementLabel(element);
-      const ariaLabel = element.getAttribute("aria-label") || void 0;
-      const placeholder = element.getAttribute("placeholder") || ((_i = element.querySelector("input")) == null ? void 0 : _i.getAttribute("placeholder")) || ((_k = (_j = element.querySelector('.el-select__placeholder, .ant-select-selection-placeholder, [class*="placeholder"]')) == null ? void 0 : _j.textContent) == null ? void 0 : _k.trim()) || void 0;
-      const title = element.getAttribute("title") || void 0;
-      const labels = "labels" in element ? Array.from(element.labels || []).map((label) => label.innerText.trim()).filter(Boolean).join(" ") : "";
-      let name = intelligentLabel || ariaLabel || labels || placeholder || element.getAttribute("name") || title || void 0;
+      const isClickableAction = tag === "button" || tag === "a" || element.getAttribute("role") === "button" || element.getAttribute("role") === "link" || element.getAttribute("role") === "tab";
       const rawText = (element.innerText || element.textContent || "").trim().replace(/\s+/g, " ").slice(0, 120);
+      const ariaLabel = element.getAttribute("aria-label") || void 0;
+      const title = element.getAttribute("title") || void 0;
+      const inHeader = isHeaderEl(element);
+      const placeholder = element.getAttribute("placeholder") || ((_i = element.querySelector("input")) == null ? void 0 : _i.getAttribute("placeholder")) || ((_k = (_j = element.querySelector('.el-select__placeholder, .ant-select-selection-placeholder, [class*="placeholder"]')) == null ? void 0 : _j.textContent) == null ? void 0 : _k.trim()) || void 0;
+      let name;
+      if (isClickableAction && rawText) {
+        name = rawText;
+      } else {
+        const intelligentLabel = getElementLabel(element);
+        const labels = "labels" in element ? Array.from(element.labels || []).map((label) => label.innerText.trim()).filter(Boolean).join(" ") : "";
+        name = intelligentLabel || ariaLabel || labels || placeholder || element.getAttribute("name") || title || void 0;
+      }
+      if (inHeader) {
+        const headerTitle = title || ariaLabel || rawText || "系统辅助设置";
+        name = `[顶部工具栏] ${headerTitle}`;
+      } else if (isClickableAction && !name && !rawText) {
+        name = "[图标按钮]";
+      }
       let val;
       if (tag === "input" || tag === "textarea" || tag === "select") {
         const isPassword = tag === "input" && element.type === "password";
@@ -4703,6 +4768,7 @@ ${bodyText}`.trim().slice(0, 4e3),
     } catch {
     }
   });
+  exports.collectAiObservation = collectAiObservation;
   exports.findClickTarget = findClickTarget;
   exports.findScrollTarget = findScrollTarget;
   exports.isDatePickerEvent = isDatePickerEvent;

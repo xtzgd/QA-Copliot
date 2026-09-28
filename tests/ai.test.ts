@@ -678,5 +678,78 @@ describe('AI Copilot 增强 (E4 - TASK-401 ~ TASK-407)', () => {
     expect(plan.action).toBe('tap');
     expect((plan as any).elementId).toBe('0:el-2');
   });
+
+  it('planBrowserAction 面对 120 个页面元素时不再被 80 个截断，且 prompt 中包含 CRUD 规则', async () => {
+    const { OpenAILlmProviderAdapter } = await import('../src/ai');
+    let capturedBody: any = null;
+
+    const mockFetcher = async (_url: string, init: any) => {
+      capturedBody = JSON.parse(init.body);
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  action: 'tap',
+                  elementId: '0:el-110',
+                  reason: '点击表格上方的新增用户按钮',
+                }),
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    };
+
+    const adapter = new OpenAILlmProviderAdapter(
+      { baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-test', model: 'gpt-4o' },
+      mockFetcher as any
+    );
+
+    // 构造 120 个元素，模拟复杂后台：前 50 个为菜单/导航，第 110 个为 + 新增
+    const mockElements: any[] = [];
+    for (let i = 1; i <= 120; i++) {
+      if (i === 5) {
+        mockElements.push({ id: `0:el-${i}`, tag: 'button', name: '[顶部工具栏] 布局大小', role: 'button' });
+      } else if (i === 110) {
+        mockElements.push({ id: `0:el-${i}`, tag: 'button', name: '+ 新增', text: '+ 新增', role: 'button' });
+      } else {
+        mockElements.push({ id: `0:el-${i}`, tag: 'a', name: `侧边栏菜单项 ${i}`, role: 'menuitem' });
+      }
+    }
+
+    const plan = await adapter.planBrowserAction({
+      instruction: '新增个用户',
+      mode: 'act',
+      history: [],
+      observations: [
+        {
+          frameId: 0,
+          frameUrl: 'https://example.com/#/system/user',
+          title: '系统管理 / 用户管理',
+          text: '',
+          scrollY: 0,
+          scrollX: 0,
+          elements: mockElements,
+        },
+      ],
+    });
+
+    expect(plan.action).toBe('tap');
+    expect((plan as any).elementId).toBe('0:el-110');
+
+    // 验证 capturedBody 中的 prompt 包含后台业务 CRUD 规范
+    const systemPromptText = capturedBody.messages[0].content;
+    expect(systemPromptText).toContain('后台管理系统业务操作（增删改查 CRUD）优先原则');
+    expect(systemPromptText).toContain('绝对严禁点击带有 [顶部工具栏] 前缀');
+
+    // 验证第 110 个元素没有被截断
+    const userPromptJson = JSON.parse(capturedBody.messages[1].content.split('【页面状态与观察数据】:\n')[1].split('\n\n【立刻响应】')[0]);
+    const sentElements = userPromptJson.observations[0].elements;
+    expect(sentElements.length).toBeGreaterThanOrEqual(110);
+    expect(sentElements.some((e: any) => e.id === '0:el-110')).toBe(true);
+  });
 });
 

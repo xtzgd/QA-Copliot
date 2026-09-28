@@ -438,7 +438,7 @@ function getActiveDatePickerPoppers(): HTMLElement[] {
  */
 const observationElementCache = new Map<string, HTMLElement>();
 
-function collectAiObservation() {
+export function collectAiObservation() {
   const selector = [
     'button', 'a[href]', 'input:not([type="hidden"])',
     'textarea', 'select', '[role="button"]', '[role="link"]', '[role="tab"]',
@@ -465,14 +465,28 @@ function collectAiObservation() {
 
   const allRaw = Array.from(document.querySelectorAll(selector));
 
-  // 关键三层分层优先：
-  // 第一优先级：活动下拉/树形选项浮层（当前用户最直接需要点选的目标）
-  // 第二优先级：活动弹窗/抽屉（当前表单上下文）
-  // 第三优先级：背景页面（仅在未被全屏弹窗完全阻断时作为末尾补充）
+  // 区域感知辅助判断
+  const isHeaderEl = (el: HTMLElement | Element) => Boolean(
+    el.closest?.('header, .navbar, .top-bar, .topbar, .right-menu, .header-tools, .header-right, #screenfull, #size-select, .global-header, .ant-layout-header, .el-header')
+  );
+  const isSidebarEl = (el: HTMLElement | Element) => Boolean(
+    el.closest?.('aside, nav, .sidebar, .sidebar-container, .left-aside, .ant-layout-sider, .el-aside')
+  );
+  const isTreeSideEl = (el: HTMLElement | Element) => Boolean(
+    el.closest?.('.org-tree, .dept-tree, .left-tree, .tree-container, .aside-tree')
+  );
+  const isMainActionOrContent = (el: HTMLElement | Element) => Boolean(
+    el.closest?.('main, [role="main"], .app-main, .main-content, #app-main, .content-container, .page-container, .ant-layout-content, .el-main, .table-toolbar, .action-bar, .handle-box, .crud-opts, .toolbar')
+  );
+
+  // 关键分层优先原则：
+  // 1. 若有活动弹窗/下拉浮层：浮层/弹窗 > 主内容区 > 其它背景
+  // 2. 无活动弹窗时：主业务内容区与操作工具栏（新增/修改/查询等）最优先，避免被顶部工具栏与几十个侧栏/树节点挤出视线
   let orderedCandidates: HTMLElement[];
   if (hasActiveModal || hasActivePopper) {
     const popperCandidates: HTMLElement[] = [];
     const modalCandidates: HTMLElement[] = [];
+    const mainCandidates: HTMLElement[] = [];
     const backgroundCandidates: HTMLElement[] = [];
     for (const el of allRaw) {
       if (!el) continue;
@@ -482,13 +496,42 @@ function collectAiObservation() {
         popperCandidates.push(el as HTMLElement);
       } else if (inModal) {
         modalCandidates.push(el as HTMLElement);
+      } else if (isMainActionOrContent(el)) {
+        mainCandidates.push(el as HTMLElement);
       } else {
         backgroundCandidates.push(el as HTMLElement);
       }
     }
-    orderedCandidates = [...popperCandidates, ...modalCandidates, ...backgroundCandidates];
+    orderedCandidates = [...popperCandidates, ...modalCandidates, ...mainCandidates, ...backgroundCandidates];
   } else {
-    orderedCandidates = allRaw.filter((el): el is HTMLElement => Boolean(el));
+    const mainCandidates: HTMLElement[] = [];
+    const treeCandidates: HTMLElement[] = [];
+    const sidebarCandidates: HTMLElement[] = [];
+    const headerCandidates: HTMLElement[] = [];
+    const otherCandidates: HTMLElement[] = [];
+
+    for (const el of allRaw) {
+      if (!el) continue;
+      if (isHeaderEl(el)) {
+        headerCandidates.push(el as HTMLElement);
+      } else if (isSidebarEl(el)) {
+        sidebarCandidates.push(el as HTMLElement);
+      } else if (isTreeSideEl(el)) {
+        treeCandidates.push(el as HTMLElement);
+      } else if (isMainActionOrContent(el)) {
+        mainCandidates.push(el as HTMLElement);
+      } else {
+        otherCandidates.push(el as HTMLElement);
+      }
+    }
+    // 左侧筛选树采样前 15 个，防止几十个部门节点挤占核心业务按钮
+    orderedCandidates = [
+      ...mainCandidates,
+      ...otherCandidates,
+      ...treeCandidates.slice(0, 15),
+      ...sidebarCandidates,
+      ...headerCandidates,
+    ];
   }
 
   observationElementCache.clear();
@@ -568,19 +611,37 @@ function collectAiObservation() {
       element.setAttribute('data-qa-obs-id', obsId);
     } catch {}
 
-    const intelligentLabel = getElementLabel(element);
+    const isClickableAction = tag === 'button' || tag === 'a' ||
+      element.getAttribute('role') === 'button' || element.getAttribute('role') === 'link' || element.getAttribute('role') === 'tab';
+
+    const rawText = (element.innerText || element.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 120);
     const ariaLabel = element.getAttribute('aria-label') || undefined;
+    const title = element.getAttribute('title') || undefined;
+    const inHeader = isHeaderEl(element);
+
     const placeholder = element.getAttribute('placeholder') ||
       element.querySelector('input')?.getAttribute('placeholder') ||
       element.querySelector('.el-select__placeholder, .ant-select-selection-placeholder, [class*="placeholder"]')?.textContent?.trim() ||
       undefined;
-    const title = element.getAttribute('title') || undefined;
-    const labels = 'labels' in element
-      ? Array.from((element as HTMLInputElement).labels || []).map((label) => label.innerText.trim()).filter(Boolean).join(' ')
-      : '';
 
-    let name = intelligentLabel || ariaLabel || labels || placeholder || element.getAttribute('name') || title || undefined;
-    const rawText = (element.innerText || element.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+    let name: string | undefined;
+    if (isClickableAction && rawText) {
+      // 核心修复：操作类按钮/链接，自身可见文字（如“+ 新增”、“查询”、“删除”）是最高优先级的名称！
+      name = rawText;
+    } else {
+      const intelligentLabel = getElementLabel(element);
+      const labels = 'labels' in element
+        ? Array.from((element as HTMLInputElement).labels || []).map((label) => label.innerText.trim()).filter(Boolean).join(' ')
+        : '';
+      name = intelligentLabel || ariaLabel || labels || placeholder || element.getAttribute('name') || title || undefined;
+    }
+
+    if (inHeader) {
+      const headerTitle = title || ariaLabel || rawText || '系统辅助设置';
+      name = `[顶部工具栏] ${headerTitle}`;
+    } else if (isClickableAction && !name && !rawText) {
+      name = '[图标按钮]';
+    }
 
     let val: string | undefined;
     if (tag === 'input' || tag === 'textarea' || tag === 'select') {

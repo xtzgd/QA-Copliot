@@ -1,18 +1,30 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Bot, CheckCircle2, CircleAlert, FileUp, Loader2, Play, Settings2, Sparkles } from 'lucide-react';
+import { BookOpen, Bot, CheckCircle2, ChevronDown, ChevronUp, CircleAlert, Copy, FileUp, Loader2, Play, Settings2, Sparkles } from 'lucide-react';
 import { sendToBackground } from '../../shared/messages';
 import { parseImportedTestSuite } from '../../shared/testCase/parser';
 import { ImportedTestSuite } from '../../shared/types/testCase';
 import { useAppStore } from '../store/useAppStore';
 
-const sampleYaml = `web:
+export const TEMPLATE_CRUD = `# 后台管理系统业务新增与验证模板（直接在当前已打开页面执行，无需跳转）
+tasks:
+  - name: 新增用户并验证
+    flow:
+      - ai: "点击页面表格上方的「+ 新增」按钮打开弹窗"
+      - sleep: 800
+      - ai: "在弹窗中依次填写：用户昵称输入 test_user，手机号码输入 13800000000"
+      - ai: "点击弹窗底部的「确定」按钮保存"
+      - sleep: 1000
+      - aiAssert: "页面出现操作成功的轻提示，或用户列表中能看到 test_user"`;
+
+export const TEMPLATE_WEB = `# 通用网站端到端测试模板（自动打开指定入口网址）
+web:
   url: "https://example.com"
 tasks:
-  - name: 搜索流程
+  - name: 搜索流程与结果验证
     flow:
       - ai: "在搜索框中输入 QA Copilot，然后提交搜索"
-      - aiAssert: "页面显示与 QA Copilot 相关的搜索结果"
-      - sleep: 500`;
+      - sleep: 500
+      - aiAssert: "页面显示与 QA Copilot 相关的搜索结果"`;
 
 interface AiTestCasesPageProps {
   mode: 'cases' | 'agent';
@@ -20,8 +32,10 @@ interface AiTestCasesPageProps {
 
 export const AiTestCasesPage: React.FC<AiTestCasesPageProps> = ({ mode }) => {
   const { setToastMessage, activeTask, lastRunnerTask, setCurrentTab, setSettingsSubTab } = useAppStore();
-  const [source, setSource] = useState(sampleYaml);
-  const [fileName, setFileName] = useState('示例用例');
+  const [source, setSource] = useState(TEMPLATE_CRUD);
+  const [fileName, setFileName] = useState('后台业务新增模板.yaml');
+  const [selectedTemplateKey, setSelectedTemplateKey] = useState<'crud' | 'web'>('crud');
+  const [showGuide, setShowGuide] = useState(false);
   const [suite, setSuite] = useState<ImportedTestSuite | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
   const [instruction, setInstruction] = useState('');
@@ -37,7 +51,7 @@ export const AiTestCasesPage: React.FC<AiTestCasesPageProps> = ({ mode }) => {
   const failedStep = runnerTask?.steps.find((step) => step.status === 'failed');
 
   useEffect(() => {
-    const parsed = parseImportedTestSuite(sampleYaml);
+    const parsed = parseImportedTestSuite(TEMPLATE_CRUD);
     setSuite(parsed.suite || null);
     setErrors(parsed.errors);
   }, []);
@@ -95,6 +109,22 @@ export const AiTestCasesPage: React.FC<AiTestCasesPageProps> = ({ mode }) => {
       setSuite(null);
       setErrors([`读取文件失败：${(error as Error).message}`]);
     }
+  };
+
+  const loadTemplate = (key: 'crud' | 'web') => {
+    setSelectedTemplateKey(key);
+    const content = key === 'crud' ? TEMPLATE_CRUD : TEMPLATE_WEB;
+    setSource(content);
+    setFileName(key === 'crud' ? '后台业务新增模板.yaml' : '通用网页测试模板.yaml');
+    parseSource(content);
+  };
+
+  const copyTemplate = () => {
+    navigator.clipboard.writeText(source).then(() => {
+      setToastMessage('用例代码已复制到剪贴板');
+    }).catch(() => {
+      setToastMessage('复制失败，请在编辑框中手动复制');
+    });
   };
 
   const runImported = async () => {
@@ -243,12 +273,102 @@ export const AiTestCasesPage: React.FC<AiTestCasesPageProps> = ({ mode }) => {
   ) : (
     <div className="flex flex-col gap-3">
       <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-[11px] leading-5 text-blue-900">
-        导入 Midscene 网页 YAML/JSON（<code>web/page + tasks + flow</code>）。当前支持 <code>ai</code>、<code>aiAssert</code>、<code>sleep</code>；脚本和未知节点会在执行前报错。
+        导入 Midscene 网页 YAML/JSON（<code>web/page + tasks + flow</code>）。支持 <code>ai</code>（操作）、<code>aiAssert</code>（断言）、<code>sleep</code>（等待）。
       </div>
+
+      {/* 编写指南与说明折叠卡片 */}
+      <div className="rounded-xl border border-slate-200 bg-white overflow-hidden text-[11px]">
+        <button
+          type="button"
+          onClick={() => setShowGuide(!showGuide)}
+          className="flex w-full items-center justify-between p-2.5 font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+        >
+          <div className="flex items-center gap-1.5 text-blue-700">
+            <BookOpen className="h-3.5 w-3.5" />
+            <span>用例编写指南与语法说明</span>
+          </div>
+          {showGuide ? <ChevronUp className="h-3.5 w-3.5 text-slate-400" /> : <ChevronDown className="h-3.5 w-3.5 text-slate-400" />}
+        </button>
+        {showGuide && (
+          <div className="border-t border-slate-100 p-3 space-y-2.5 text-slate-600 leading-relaxed bg-slate-50/50">
+            <div>
+              <div className="font-bold text-slate-800 mb-1">1. 用例文件结构</div>
+              <ul className="list-disc list-inside space-y-0.5 text-[10px]">
+                <li><code className="text-blue-600 font-mono">web.url</code>（可选）：测试入口网址；若不写则在当前已打开的网页直接执行。</li>
+                <li><code className="text-blue-600 font-mono">tasks</code>：测试任务数组，每个任务包含 <code className="font-mono">name</code> 和 <code className="font-mono">flow</code> 步骤列表。</li>
+              </ul>
+            </div>
+            <div>
+              <div className="font-bold text-slate-800 mb-1">2. 支持的三大动作类型</div>
+              <ul className="list-disc list-inside space-y-1 text-[10px]">
+                <li>
+                  <strong className="text-slate-800">ai (操作指令)</strong>：驱动 AI 执行点击、表单录入、下拉选择、滚动等。<br/>
+                  <span className="text-slate-500 font-mono">示例: - ai: "点击「+ 新增」按钮打开弹窗"</span>
+                </li>
+                <li>
+                  <strong className="text-slate-800">aiAssert (断言检查)</strong>：让 AI 结合页面视觉画面与文本核对业务结果，失败则停止并报错。<br/>
+                  <span className="text-slate-500 font-mono">示例: - aiAssert: "页面弹出保存成功的消息提示"</span>
+                </li>
+                <li>
+                  <strong className="text-slate-800">sleep (等待延时)</strong>：等待动画完成或接口响应，毫秒单位（0~30000ms）。<br/>
+                  <span className="text-slate-500 font-mono">示例: - sleep: 800</span>
+                </li>
+              </ul>
+            </div>
+            <div>
+              <div className="font-bold text-slate-800 mb-1">3. 编写建议与技巧</div>
+              <ul className="list-disc list-inside space-y-0.5 text-[10px]">
+                <li><strong>明确按钮文字</strong>：指明按钮上的具体文本（如「+ 新增」、「保存」、「查询」）。</li>
+                <li><strong>弹窗动画等待</strong>：点击打开弹窗或提交接口后，建议插入 <code className="font-mono">sleep: 800</code> 确保动画和网络请求完成。</li>
+                <li><strong>分步明确表单</strong>：表单项较多时，可以在指令中明确字段与值（如“用户昵称填 admin_test，手机号填 13800000000”）。</li>
+              </ul>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 快捷模板载入栏 */}
+      <div className="flex items-center justify-between gap-1">
+        <div className="flex items-center gap-1">
+          <span className="text-[10px] font-semibold text-slate-500">快速载入模板:</span>
+          <button
+            type="button"
+            onClick={() => loadTemplate('crud')}
+            className={`px-2 py-0.5 text-[10px] rounded border transition-colors ${
+              selectedTemplateKey === 'crud'
+                ? 'bg-blue-50 border-blue-300 text-blue-700 font-bold'
+                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            后台业务 CRUD
+          </button>
+          <button
+            type="button"
+            onClick={() => loadTemplate('web')}
+            className={`px-2 py-0.5 text-[10px] rounded border transition-colors ${
+              selectedTemplateKey === 'web'
+                ? 'bg-blue-50 border-blue-300 text-blue-700 font-bold'
+                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            通用网页测试
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={copyTemplate}
+          title="复制当前模板代码"
+          className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-blue-600 transition-colors p-1"
+        >
+          <Copy className="h-3 w-3" />
+          <span>复制</span>
+        </button>
+      </div>
+
       <input ref={fileRef} type="file" accept=".yaml,.yml,.json,application/json,text/yaml" onChange={onFileSelected} className="hidden" />
       <div className="flex gap-2">
         <button onClick={() => fileRef.current?.click()} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white py-2 font-semibold text-slate-700 hover:bg-slate-50">
-          <FileUp className="h-3.5 w-3.5" /> 导入 YAML / JSON
+          <FileUp className="h-3.5 w-3.5" /> 导入本地 YAML / JSON 文件
         </button>
         <button onClick={() => parseSource()} className="rounded-lg border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-700 hover:bg-slate-50">
           校验并预览

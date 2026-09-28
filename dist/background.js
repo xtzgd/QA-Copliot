@@ -4817,13 +4817,19 @@ ${hasVisionScreenshot ? "【视觉与多模态感知】系统已附带当前网�
    - 【极其重要·严禁误点背景侧边栏树】：当在弹窗中选择归属部门等下拉项时，必须且只能点击 [当前下拉选项] 下的选项节点，绝对严禁点击带有 [背景页面] 前缀的左侧组织机构树或页面背景节点！
 2. 选项被点击后浮层会自动收起，下拉框将显示选中的文本。此时该字段即完成选择，立刻推进下一个字段！
 
+【后台管理系统业务操作（增删改查 CRUD）优先原则】
+1. 当用户目标是业务数据操作（如“新增用户/订单/数据”、“添加”、“创建”、“查询”、“搜索”、“删除”、“批量操作”等）：
+   - 必须优先在页面主内容区、表格上方操作工具栏中定位文字完全吻合的按钮（例如名称或文本包含“+ 新增”、“新增”、“添加”、“创建”的按钮）并执行 tap！
+   - 绝对严禁点击带有 [顶部工具栏] 前缀的系统辅助设置图标（如“布局大小/尺寸选择”Default/Medium/Small/Mini、“全屏”、“主题切换”、“用户头像下拉”等非业务功能）！
+   - 如果当前已经在目标业务页面（如“系统管理 / 用户管理”），切勿再去点击侧边栏的页面导航链接。
+
 模式为 assert 时，只能返回 {"action":"assertion","passed":true或false,"reason":"基于页面证据与视觉画面的简短说明"}。若页面证据与视觉画面不足以证明成功，passed 必须为 false。`;
-    let remainingElements = 150;
+    let remainingElements = 200;
     let remainingTextChars = 8e3;
     const compactObservations = context.observations.slice(0, 8).map((frame) => {
       const text = frame.text.slice(0, Math.min(1500, remainingTextChars));
       remainingTextChars -= text.length;
-      const elements = frame.elements.slice(0, Math.min(80, remainingElements));
+      const elements = frame.elements.slice(0, Math.min(150, remainingElements));
       remainingElements -= elements.length;
       return {
         frameId: frame.frameId,
@@ -5227,7 +5233,7 @@ async function collectAgentObservations(tabId) {
         text: (result.text || "").slice(0, 4e3),
         scrollY: Number(result.scrollY || 0),
         scrollX: Number(result.scrollX || 0),
-        elements: (result.elements || []).slice(0, 100).map((element) => ({
+        elements: (result.elements || []).slice(0, 150).map((element) => ({
           ...element,
           id: `${frame.frameId}:${element.id}`
         }))
@@ -5238,9 +5244,9 @@ async function collectAgentObservations(tabId) {
   }));
   const found = observations.filter((item) => Boolean(item));
   if (found.length === 0) throw new Error("无法读取当前页面，请确认页面已加载且允许 QA Copilot 注入脚本");
-  let remainingElements = 150;
+  let remainingElements = 200;
   return found.map((frame) => {
-    const elements = frame.elements.slice(0, Math.min(100, remainingElements));
+    const elements = frame.elements.slice(0, Math.min(150, remainingElements));
     remainingElements -= elements.length;
     return { ...frame, elements };
   });
