@@ -79,7 +79,12 @@ export const AiTestCasesPage: React.FC<AiTestCasesPageProps> = ({ mode }) => {
     } else if (lastRunnerTask.status === 'cancelled') {
       setRunNotice({ kind: 'info', message: '任务已取消' });
     } else if (lastRunnerTask.status === 'completed') {
-      setRunNotice({ kind: 'success', message: '任务执行完成；请查看步骤状态和页面结果' });
+      const passedAssert = lastRunnerTask.steps.filter((s) => s.assertionPassed);
+      const assertReason = passedAssert.length > 0 ? passedAssert.map((s) => s.detail?.replace(/^断言通过：/, '')).join('；') : '';
+      setRunNotice({
+        kind: 'success',
+        message: `测试通过 (PASS)${assertReason ? `：${assertReason}` : '；所有步骤核对通过'}`,
+      });
     }
   }, [lastRunnerTask]);
 
@@ -140,10 +145,10 @@ export const AiTestCasesPage: React.FC<AiTestCasesPageProps> = ({ mode }) => {
       });
       if (result?.error) {
         setRunNotice({ kind: 'error', message: `${result.failedStep ? `第 ${result.failedStep} 步：` : ''}${result.error}` });
-        setToastMessage(`用例执行失败：${result.error}`);
+        setToastMessage(`用例测试失败 (FAIL)：${result.error}`);
       } else if (result?.success) {
-        setRunNotice({ kind: 'success', message: '导入用例执行完成' });
-        setToastMessage('导入用例执行完成');
+        setRunNotice({ kind: 'success', message: '测试用例全部执行通过 (PASS)' });
+        setToastMessage('🎉 测试通过 (PASS)');
       } else if (result?.cancelled) {
         setRunNotice({ kind: 'info', message: '任务已取消' });
       } else {
@@ -152,7 +157,7 @@ export const AiTestCasesPage: React.FC<AiTestCasesPageProps> = ({ mode }) => {
     } catch (error) {
       const message = (error as Error).message || '无法连接后台';
       setRunNotice({ kind: 'error', message });
-      setToastMessage(`用例执行失败：${message}`);
+      setToastMessage(`用例测试失败：${message}`);
     } finally {
       setIsRunning(false);
     }
@@ -168,16 +173,16 @@ export const AiTestCasesPage: React.FC<AiTestCasesPageProps> = ({ mode }) => {
     useAppStore.setState({ lastRunnerTask: null });
     setIsRunning(true);
     try {
-      const result = await sendToBackground<{ success?: boolean; error?: string; failedStep?: number; cancelled?: boolean }>({
+      const result = await sendToBackground<{ success?: boolean; error?: string; failedStep?: number; cancelled?: boolean; reason?: string }>({
         type: 'RUN_NATURAL_LANGUAGE_TEST',
         payload: { instruction: goal },
       });
       if (result?.error) {
         setRunNotice({ kind: 'error', message: `${result.failedStep ? `第 ${result.failedStep} 步：` : ''}${result.error}` });
-        setToastMessage(`自动化执行失败：${result.error}`);
+        setToastMessage(`❌ 测试未通过 (FAIL)：${result.error}`);
       } else if (result?.success) {
-        setRunNotice({ kind: 'success', message: '自动化执行完成；请查看步骤状态和页面结果' });
-        setToastMessage('自然语言自动化任务完成');
+        setRunNotice({ kind: 'success', message: `测试通过 (PASS)${result.reason ? `：${result.reason}` : ''}` });
+        setToastMessage(`🎉 测试通过 (PASS)${result.reason ? `：${result.reason}` : ''}`);
       } else if (result?.cancelled) {
         setRunNotice({ kind: 'info', message: '任务已取消' });
       } else {
@@ -186,7 +191,7 @@ export const AiTestCasesPage: React.FC<AiTestCasesPageProps> = ({ mode }) => {
     } catch (error) {
       const message = (error as Error).message || '无法连接后台';
       setRunNotice({ kind: 'error', message });
-      setToastMessage(`自动化执行失败：${message}`);
+      setToastMessage(`测试执行失败：${message}`);
     } finally {
       setIsRunning(false);
     }
@@ -200,33 +205,69 @@ export const AiTestCasesPage: React.FC<AiTestCasesPageProps> = ({ mode }) => {
       aria-live="polite"
       className={`rounded-xl border p-3 text-[11px] leading-5 ${
         runnerTask?.status === 'failed' || runNotice?.kind === 'error'
-          ? 'border-rose-200 bg-rose-50 text-rose-900'
+          ? 'border-rose-200 bg-rose-50 text-rose-900 shadow-sm'
           : runnerTask && ['running', 'cancelling', 'queued'].includes(runnerTask.status)
-            ? 'border-blue-200 bg-blue-50 text-blue-900'
-            : 'border-emerald-200 bg-emerald-50 text-emerald-900'
+            ? 'border-blue-200 bg-blue-50 text-blue-900 shadow-sm'
+            : 'border-emerald-200 bg-emerald-50 text-emerald-900 shadow-sm'
       }`}
     >
       {runnerTask ? (
         <>
           <div className="flex items-center justify-between gap-2 font-bold">
-            <span>{['running', 'cancelling', 'queued'].includes(runnerTask.status)
-              ? `正在执行 · ${elapsedSeconds} 秒`
-              : runnerTask.status === 'failed' ? '执行失败' : runnerTask.status === 'cancelled' ? '任务已取消' : '执行完成'}</span>
-            <span>{runnerTask.currentStep}/{runnerTask.totalSteps} 步</span>
+            <span className="flex items-center gap-1.5 text-xs">
+              {['running', 'cancelling', 'queued'].includes(runnerTask.status) ? (
+                <>
+                  <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                  <span>正在执行 · {elapsedSeconds} 秒</span>
+                </>
+              ) : runnerTask.status === 'failed' ? (
+                <>
+                  <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-rose-600 text-white font-black text-[10px]">✕</span>
+                  <span className="text-rose-700 font-extrabold text-[13px]">测试未通过 (FAIL)</span>
+                </>
+              ) : runnerTask.status === 'cancelled' ? (
+                <span>任务已取消</span>
+              ) : (
+                <>
+                  <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-emerald-600 text-white font-black text-[10px]">✓</span>
+                  <span className="text-emerald-700 font-extrabold text-[13px]">测试通过 (PASS)</span>
+                </>
+              )}
+            </span>
+            <span className="text-slate-500">{runnerTask.currentStep}/{runnerTask.totalSteps} 步</span>
           </div>
           {runnerStep && <div className="mt-1 break-words">当前步骤：{runnerStep.title}</div>}
           {runnerStep?.detail && <div className="break-words opacity-80">{runnerStep.detail}</div>}
           {(failedStep?.error || runnerTask.error) && (
-            <div className="mt-1 break-words font-semibold">错误：{failedStep?.error || runnerTask.error}</div>
+            <div className="mt-2 p-2 rounded-lg bg-rose-100/90 text-rose-950 break-words font-semibold border border-rose-200">
+              失败原因：{failedStep?.error || runnerTask.error}
+            </div>
           )}
-          <details className="mt-2">
+          {runnerTask.status === 'completed' && (
+            <div className="mt-2 p-2 rounded-lg bg-emerald-100/90 text-emerald-950 break-words border border-emerald-200">
+              <strong>验证结果：</strong>
+              {runnerTask.steps.filter((s) => s.assertionPassed).map((s) => s.detail?.replace(/^断言通过：/, '')).join('；') || '所有自动化步骤已完成并核对通过'}
+            </div>
+          )}
+          <details className="mt-2" open={runnerTask.status === 'failed' || runnerTask.status === 'completed'}>
             <summary className="cursor-pointer font-semibold">查看 {runnerTask.steps.length} 步执行明细</summary>
             <div className="mt-1 flex flex-col gap-1">
               {runnerTask.steps.map((step) => (
-                <div key={step.stepIndex} className="break-words rounded-md bg-white/70 px-2 py-1">
-                  <div>{step.stepIndex + 1}. {step.status === 'failed' ? '失败' : step.status === 'success' ? '完成' : step.status === 'running' ? '进行中' : '等待中'} · {step.title}</div>
-                  {step.detail && <div className="opacity-75">{step.detail}</div>}
-                  {step.error && <div className="font-semibold">{step.error}</div>}
+                <div key={step.stepIndex} className="break-words rounded-md bg-white/80 border border-slate-100 px-2 py-1.5">
+                  <div className="flex items-center gap-1.5">
+                    {step.status === 'failed' ? (
+                      <span className="text-rose-600 font-bold">✕ 失败</span>
+                    ) : step.status === 'success' ? (
+                      <span className="text-emerald-600 font-bold">✓ 通过</span>
+                    ) : step.status === 'running' ? (
+                      <span className="text-blue-600 font-bold">● 进行中</span>
+                    ) : (
+                      <span className="text-slate-400">○ 等待</span>
+                    )}
+                    <span className="font-medium text-slate-800">{step.stepIndex + 1}. {step.title}</span>
+                  </div>
+                  {step.detail && <div className="mt-0.5 opacity-80 text-[10.5px]">{step.detail}</div>}
+                  {step.error && <div className="mt-0.5 font-semibold text-rose-700 text-[10.5px]">{step.error}</div>}
                 </div>
               ))}
             </div>
@@ -272,9 +313,6 @@ export const AiTestCasesPage: React.FC<AiTestCasesPageProps> = ({ mode }) => {
     </div>
   ) : (
     <div className="flex flex-col gap-3">
-      <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-[11px] leading-5 text-blue-900">
-        导入 Midscene 网页 YAML/JSON（<code>web/page + tasks + flow</code>）。支持 <code>ai</code>（操作）、<code>aiAssert</code>（断言）、<code>sleep</code>（等待）。
-      </div>
 
       {/* 编写指南与说明折叠卡片 */}
       <div className="rounded-xl border border-slate-200 bg-white overflow-hidden text-[11px]">

@@ -24,6 +24,9 @@ export class MarkdownBugExporter {
     lines.push('## 🖥️ 测试环境');
     lines.push(`- **环境**: ${snapshot?.environment || '未知'}`);
     lines.push(`- **URL**: \`${snapshot?.url || '未知'}\``);
+    if ((bug as any).currentUser || snapshot?.currentUser) {
+      lines.push(`- **当前登录用户**: \`${(bug as any).currentUser || snapshot?.currentUser}\``);
+    }
     if (snapshot?.browserInfo) {
       const b = snapshot.browserInfo;
       lines.push(`- **浏览器**: ${b.browserName} ${b.browserVersion}`);
@@ -57,10 +60,18 @@ export class MarkdownBugExporter {
 
     // 4. 关键技术证据 (Network & Console)
     if (snapshot) {
+      const isStatic = (mimeType = '', pathname = '') =>
+        /^(image|font)\//i.test(mimeType) ||
+        /^text\/css/i.test(mimeType) ||
+        /\.(?:css|png|jpe?g|gif|svg|ico|woff2?|ttf|map)(?:\?|$)/i.test(pathname);
+
       const errorReqs = snapshot.networkRequests.filter((r) => r.isError || r.isSlow);
-      if (errorReqs.length > 0) {
-        lines.push('## 🌐 异常网络请求');
-        errorReqs.forEach((r) => {
+      const businessReqs = snapshot.networkRequests.filter((r) => !isStatic(r.mimeType, r.pathname));
+      const targetReqs = errorReqs.length > 0 ? errorReqs : businessReqs.slice(-5);
+
+      if (targetReqs.length > 0) {
+        lines.push(errorReqs.length > 0 ? '## 🌐 异常网络请求' : '## 🌐 涉及业务网络请求 (HTTP 正常返回)');
+        targetReqs.forEach((r) => {
           lines.push(`### \`${r.method}\` \`${r.pathname}\` (${r.status ? `HTTP ${r.status}` : '网络中断'})`);
           lines.push(`- **耗时**: ${r.duration}ms`);
           lines.push(`- **完整 URL**: \`${r.url}\``);

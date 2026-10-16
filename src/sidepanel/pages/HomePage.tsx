@@ -6,6 +6,7 @@ import React, { useEffect, useState } from 'react';
 import {
   AlertCircle,
   AlertOctagon,
+  Bookmark,
   Bot,
   Camera,
   CheckCircle2,
@@ -21,16 +22,21 @@ import {
   PinOff,
   PanelRightClose,
   ExternalLink,
+  Zap,
 } from 'lucide-react';
 import { sendToBackground } from '../../shared/messages';
 import { useAppStore } from '../store/useAppStore';
 import { recordingService } from '../services/recordingService';
 import { pipService } from '../services/pipService';
 import { QuickLoginCard } from '../components/QuickLoginCard';
+import { FormFillTemplate } from '../../shared/types/formFill';
+import { formFillTemplateRepo } from '../../db/repositories/formFillTemplateRepository';
+import { executeTemplateQuickFill } from '../../shared/utils/formQuickFill';
 
 export const HomePage: React.FC = () => {
   const {
     activeTask,
+    lastRunnerTask,
     activeSession,
     recentAnomalies,
     isCapturing,
@@ -39,6 +45,7 @@ export const HomePage: React.FC = () => {
     triggerSnapshot,
     setCurrentTab,
     setAiSubTab,
+    setFormFillSubTab,
     setSettingsSubTab,
     setToastMessage,
   } = useAppStore();
@@ -48,6 +55,41 @@ export const HomePage: React.FC = () => {
   const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(pipService.isAlwaysOnTop());
   const [nlInstruction, setNlInstruction] = useState('');
   const [isNlRunning, setIsNlRunning] = useState(false);
+  const [fillTemplates, setFillTemplates] = useState<FormFillTemplate[]>([]);
+  const [quickFillingTemplateId, setQuickFillingTemplateId] = useState<string | null>(null);
+
+  // 页面加载与获得焦点时，自动获取最新填表模板列表
+  useEffect(() => {
+    let isMounted = true;
+    const loadTemplates = () => {
+      formFillTemplateRepo
+        .listAll()
+        .then((list) => {
+          if (isMounted) setFillTemplates(list);
+        })
+        .catch(() => {});
+    };
+    loadTemplates();
+    const handleFocus = () => loadTemplates();
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      isMounted = false;
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, []);
+
+  const handleQuickFillFromHome = async (tpl: FormFillTemplate) => {
+    setQuickFillingTemplateId(tpl.id);
+    try {
+      const res = await executeTemplateQuickFill(tpl);
+      setToastMessage(res.message);
+    } catch (err) {
+      setToastMessage((err as Error).message || '一键填表失败');
+    } finally {
+      setQuickFillingTemplateId(null);
+    }
+  };
+
   const hasActiveRun = activeTask?.type === 'runner_test' && ['running', 'cancelling', 'queued'].includes(activeTask.status);
 
   const handleQuickRunNl = async () => {
@@ -59,20 +101,20 @@ export const HomePage: React.FC = () => {
     useAppStore.setState({ lastRunnerTask: null });
     setIsNlRunning(true);
     try {
-      const result = await sendToBackground<{ success?: boolean; error?: string; failedStep?: number; cancelled?: boolean }>({
+      const result = await sendToBackground<{ success?: boolean; error?: string; failedStep?: number; cancelled?: boolean; reason?: string }>({
         type: 'RUN_NATURAL_LANGUAGE_TEST',
         payload: { instruction: goal },
       });
       if (result?.error) {
-        setToastMessage(`自动化执行失败：${result.error}`);
+        setToastMessage(`❌ 测试未通过 (FAIL)：${result.error}`);
       } else if (result?.success) {
-        setToastMessage('自然语言自动化任务完成');
+        setToastMessage(`🎉 测试通过 (PASS)${result.reason ? `：${result.reason}` : ''}`);
       } else if (result?.cancelled) {
         setToastMessage('任务已取消');
       }
     } catch (error) {
       const message = (error as Error).message || '无法连接后台';
-      setToastMessage(`自动化执行失败：${message}`);
+      setToastMessage(`❌ 测试未通过：${message}`);
     } finally {
       setIsNlRunning(false);
     }
@@ -217,7 +259,7 @@ export const HomePage: React.FC = () => {
           </div>
           <div className="flex items-baseline gap-1.5">
             <h1 className="text-lg font-bold text-slate-900 tracking-tight">QA Copilot</h1>
-            <span className="text-[11px] font-semibold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">V1.0.9</span>
+            <span className="text-[11px] font-semibold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">V1.1.0</span>
           </div>
         </div>
         <div className="flex items-center gap-1.5">
@@ -473,6 +515,159 @@ export const HomePage: React.FC = () => {
             )}
           </button>
         </div>
+
+        {/* 自然语言测试即时状态指示 */}
+        {(() => {
+          const currentRunner = activeTask?.type === 'runner_test' ? activeTask : lastRunnerTask?.type === 'runner_test' ? lastRunnerTask : null;
+          if (!currentRunner) return null;
+          const isBusy = ['running', 'cancelling', 'queued'].includes(currentRunner.status);
+          const isFailed = currentRunner.status === 'failed';
+          const isPassed = currentRunner.status === 'completed';
+          const currentStep = currentRunner.steps.find((s) => s.status === 'running') || currentRunner.steps[currentRunner.currentStep - 1] || currentRunner.steps[0];
+          const failedStep = currentRunner.steps.find((s) => s.status === 'failed');
+          const passedAssert = currentRunner.steps.filter((s) => s.assertionPassed);
+          const assertReason = passedAssert.length > 0 ? passedAssert.map((s) => s.detail?.replace(/^断言通过：/, '')).join('；') : '';
+
+          return (
+            <div className={`p-2 rounded-lg text-[11px] leading-4 border ${
+              isFailed ? 'bg-rose-50 border-rose-200 text-rose-900' :
+              isPassed ? 'bg-emerald-50 border-emerald-200 text-emerald-900' :
+              'bg-blue-50 border-blue-200 text-blue-900'
+            }`}>
+              <div className="flex items-center justify-between font-bold">
+                <span className="flex items-center gap-1.5">
+                  {isBusy ? (
+                    <>
+                      <Loader2 className="w-3 h-3 animate-spin text-blue-600" />
+                      <span>正在执行 ({currentRunner.currentStep}/{currentRunner.totalSteps}步)</span>
+                    </>
+                  ) : isFailed ? (
+                    <>
+                      <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-rose-600 text-white font-black text-[9px]">✕</span>
+                      <span className="font-extrabold text-rose-700">测试未通过 (FAIL)</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-600 text-white font-black text-[9px]">✓</span>
+                      <span className="font-extrabold text-emerald-700">测试通过 (PASS)</span>
+                    </>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAiSubTab('agent');
+                    setCurrentTab('ai');
+                  }}
+                  className="text-[10px] text-slate-500 hover:text-slate-800 underline cursor-pointer"
+                >
+                  查看明细
+                </button>
+              </div>
+              {isBusy && currentStep?.detail && (
+                <div className="mt-1 opacity-85 truncate">{currentStep.detail}</div>
+              )}
+              {isFailed && (
+                <div className="mt-1 text-rose-800 font-medium break-words">
+                  {failedStep?.error || currentRunner.error || '执行遇到错误'}
+                </div>
+              )}
+              {isPassed && (
+                <div className="mt-1 text-emerald-800 font-medium break-words">
+                  {assertReason || '页面状态验证符合预期'}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+      </div>
+
+      {/* 首页智能填表模板库快捷卡片 */}
+      <div className="bg-white rounded-xl p-3 border border-slate-200 shadow-2xs flex flex-col gap-2.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <div className="w-5 h-5 rounded-md bg-blue-100 flex items-center justify-center text-blue-600">
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+            </div>
+            <span className="text-xs font-bold text-slate-800">智能填表模板库</span>
+            {fillTemplates.length > 0 && (
+              <span className="text-[10px] font-semibold bg-blue-50 text-blue-700 px-1.5 py-0.2 rounded-full">
+                {fillTemplates.length}
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setAiSubTab('formFill');
+              setFormFillSubTab('templates');
+              setCurrentTab('ai');
+            }}
+            className="text-[11px] text-blue-600 hover:text-blue-700 flex items-center font-medium cursor-pointer"
+          >
+            管理模板库 <ChevronRight className="w-3.5 h-3.5 ml-0.5" />
+          </button>
+        </div>
+
+        {fillTemplates.length === 0 ? (
+          <div className="py-3 px-2 bg-slate-50 rounded-lg border border-dashed border-slate-200 text-center flex flex-col items-center gap-1.5 text-slate-500">
+            <Bookmark className="w-4 h-4 text-slate-400" />
+            <span className="text-[11px]">暂无填表模板</span>
+            <button
+              type="button"
+              onClick={() => {
+                setAiSubTab('formFill');
+                setFormFillSubTab('templates');
+                setCurrentTab('ai');
+              }}
+              className="text-[10px] text-blue-600 hover:underline font-medium cursor-pointer"
+            >
+              + 前往智能填表提取/新建模板
+            </button>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-1.5">
+            {fillTemplates.slice(0, 3).map((tpl) => {
+              const isFilling = quickFillingTemplateId === tpl.id;
+              return (
+                <div
+                  key={tpl.id}
+                  className="flex items-center justify-between p-2 rounded-lg bg-slate-50 hover:bg-slate-100/70 border border-slate-100 transition-colors"
+                >
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-2">
+                    <Bookmark className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                    <span className="text-xs font-medium text-slate-800 truncate" title={tpl.name}>
+                      {tpl.name}
+                    </span>
+                    <span className="text-[9px] bg-slate-200/80 text-slate-600 px-1.5 py-0.2 rounded shrink-0">
+                      {tpl.rules.length} 项
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleQuickFillFromHome(tpl)}
+                    disabled={isFilling || Boolean(quickFillingTemplateId)}
+                    className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-[11px] font-medium rounded-lg flex items-center gap-1 transition-colors shadow-2xs shrink-0 cursor-pointer disabled:cursor-not-allowed"
+                    title="一键直接将该模板数据填入当前网页活动表单"
+                  >
+                    {isFilling ? (
+                      <>
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        <span>填入中</span>
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="w-3 h-3" />
+                        <span>一键填入</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* 最近异常模块 */}

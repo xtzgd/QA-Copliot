@@ -48,6 +48,8 @@ interface AppState {
   setCurrentTab: (tab: NavTab, activeView?: ActiveView) => void;
   setActiveView: (view: ActiveView) => void;
   setAiSubTab: (subTab: AiSubTab) => void;
+  formFillSubTab: 'ai' | 'templates';
+  setFormFillSubTab: (subTab: 'ai' | 'templates') => void;
   setSettingsSubTab: (subTab: SettingsSubTab) => void;
   setSelectedProject: (proj: string) => void;
   setCurrentUrl: (url: string) => void;
@@ -91,10 +93,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   activeTask: null,
   lastRunnerTask: null,
   isPipActive: false,
+  formFillSubTab: 'ai',
 
   setCurrentTab: (tab, activeView = 'main') => set({ currentTab: tab, activeView }),
   setActiveView: (view) => set({ activeView: view }),
   setAiSubTab: (aiSubTab) => set({ aiSubTab }),
+  setFormFillSubTab: (formFillSubTab) => set({ formFillSubTab }),
   setSettingsSubTab: (settingsSubTab) => set({ settingsSubTab }),
   setSelectedProject: (selectedProject) => {
     set({ selectedProject });

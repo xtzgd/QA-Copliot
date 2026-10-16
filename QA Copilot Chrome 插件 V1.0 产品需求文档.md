@@ -1,1669 +1,499 @@
-# QA Copilot Chrome 插件 V1.0 产品需求文档
+# QA Copilot 智能测试助手 Chrome 插件产品需求文档 (PRD)
 
-## 1. 产品名称
-
-暂定：**QA Copilot**
-
-中文名可选：
-
-- 测试助手
-- QA 助手
-- TestPilot
-- BugPilot
-- QMate
-
-建议开发阶段先使用 **QA Copilot**。
+| 文档版本 | 发布日期 | 编写人 | 适用范围 | 状态 |
+| :--- | :--- | :--- | :--- | :--- |
+| **V1.1.0** | 2026-09-30 | QA Copilot 架构与产品团队 | Web QA 工程师、前端与后端开发、测试主管 | 正式发布 |
 
 ---
 
-# 2. 产品定位
+## 目录
 
-QA Copilot 是一款面向 Web QA 工程师的 Chrome 浏览器插件。
-
-核心目标不是替代 Selenium、Playwright、Postman 等专业工具，而是减少 QA 在日常测试中的重复劳动。
-
-产品围绕以下流程展开：
-
-**开始测试 → 自动记录 → 发现异常 → 收集证据 → AI 整理 → 提交 Bug → 开发修复 → QA 回归**
-
-产品核心价值：
-
-> 让 QA 不再手工整理测试证据。
-
----
-
-# 3. V1.0 核心目标
-
-V1.0 暂时不追求“大而全”，重点完成四个能力。
-
-### 1. 测试过程自动记录
-
-自动记录：
-
-- 页面访问
-- 页面跳转
-- 点击
-- 输入
-- 页面截图
-- API 请求
-- API Response
-- HTTP 4xx / 5xx
-- 慢接口
-- Console Error
-- JS Exception
-- 浏览器环境
+- [一、文档元信息与版本历史](#一文档元信息与版本历史)
+- [二、产品概述与业务定位](#二产品概述与业务定位)
+  - [2.1 业务背景与行业痛点](#21-业务背景与行业痛点)
+  - [2.2 产品愿景与核心价值](#22-产品愿景与核心价值)
+  - [2.3 产品能力边界与协同定位](#23-产品能力边界与协同定位)
+- [三、用户画像与典型使用场景](#三用户画像与典型使用场景)
+  - [3.1 用户角色画像](#31-用户角色画像)
+  - [3.2 典型端到端业务使用旅程](#32-典型端到端业务使用旅程)
+- [四、系统总体架构设计](#四系统总体架构设计)
+  - [4.1 Chrome MV3 模块协同架构](#41-chrome-mv3-模块协同架构)
+  - [4.2 核心数据流转时序图](#42-核心数据流转时序图)
+- [五、核心功能模块详细需求规范](#五核心功能模块详细需求规范)
+  - [5.1 全自动现场感知与事件观测录制](#51-全自动现场感知与事件观测录制)
+  - [5.2 快捷登录与多账号角色管理](#52-快捷登录与多账号角色管理)
+  - [5.3 AI 智能填表与复杂组件交互自愈](#53-ai-智能填表与复杂组件交互自愈)
+  - [5.4 现场快照打包与 AI 智能根因分析](#54-现场快照打包与-ai-智能根因分析)
+  - [5.5 禅道 (ZenTao) 缺陷管理平台深度集成](#55-禅道-zentao-缺陷管理平台深度集成)
+  - [5.6 画中画 (PiP) 独立置顶悬浮窗体系](#56-画中画-pip-独立置顶悬浮窗体系)
+  - [5.7 API 接口拦截、Mock 与单步重放调试](#57-api-接口拦截mock-与单步重放调试)
+  - [5.8 智能测试用例与边界数据生成](#58-智能测试用例与边界数据生成)
+  - [5.9 隐私合规与数据安全脱敏机制](#59-隐私合规与数据安全脱敏机制)
+- [六、本地数据模型与持久化设计](#六本地数据模型与持久化设计)
+  - [6.1 数据存储架构 (Dexie.js / IndexedDB)](#61-数据存储架构-dexiejs--indexeddb)
+  - [6.2 核心实体关系表设计](#62-核心实体关系表设计)
+- [七、非功能性需求 (NFR)](#七非功能性需求-nfr)
+  - [7.1 性能与资源消耗指标](#71-性能与资源消耗指标)
+  - [7.2 稳定性与错误容灾策略](#72-稳定性与错误容灾策略)
+  - [7.3 浏览器与操作系统兼容性](#73-浏览器与操作系统兼容性)
+- [八、版本规划与演进路线](#八版本规划与演进路线)
 
 ---
 
-### 2. 一键生成 Bug
+## 一、文档元信息与版本历史
 
-QA 发现问题后点击：
+### 1.1 版本演进记录
 
-**「发现问题」**
-
-系统自动整理：
-
-- Bug 标题
-- 测试环境
-- URL
-- 浏览器信息
-- 复现步骤
-- 预期结果
-- 实际结果
-- 异常接口
-- Console Error
-- 截图
-- 操作记录
+| 版本号 | 修订日期 | 修订内容摘要 | 修订人 | 审核人 |
+| :--- | :--- | :--- | :--- | :--- |
+| **V1.0.0** | 2026-09-03 | 初始功能定义，确定 Chrome MV3 Side Panel 架构与基础观测功能 | 产品团队 | 技术委员会 |
+| **V1.0.5** | 2026-09-15 | 增加 AI 智能填表引擎、多系统快捷登录支持与复杂 DOM 自愈设计 | 研发团队 | 测试负责人 |
+| **V1.1.0** | 2026-09-30 | 完善禅道卡片化提单集成、完整可滚动 API 数据呈现、画中画置顶窗、网络 Mock 体系 | 全体团队 | 项目总监 |
 
 ---
 
-### 3. 自动关联异常
+## 二、产品概述与业务定位
 
-插件自动分析：
+### 2.1 业务背景与行业痛点
 
-**用户做了什么**
+在现代软件研发体系中，Web 前端复杂度日益攀升，单页面应用 (SPA)、微前端与富交互表单极其普遍。QA 工程师在日常功能测试与探索性测试中，面临如下巨大痛点：
 
-和
+```mermaid
+flowchart TD
+    subgraph Step1 ["第一阶段：现场故障复现与线索抓取（传统手工方式极耗时）"]
+        direction LR
+        A["1. 发现界面缺陷/异常报错"] --> B["2. 手动截图并标记红框"] --> C["3. 开启F12复制接口与日志"]
+    end
+    subgraph Step2 ["第二阶段：凭证整理与缺陷录入（沟通成本极高且易遗漏）"]
+        direction LR
+        D["4. 登录禅道/Jira手动建单"] --> E["5. 手打复现步骤与上下文"] --> F["6. 开发反馈环境不符无法复现"]
+    end
+    Step1 ==> Step2
+    F -.重新沟通联调与重新抓包.-o A
+```
 
-**系统随后发生了什么**
+- **证据收集繁琐冗长**：QA 发现问题后，需要截屏、打开 DevTools 过滤报错请求、复制响应 JSON、复制 Console 堆栈，平均提交一个有效 Bug 耗时 **5~10 分钟**。
+- **复现步骤容易失真**：QA 靠记忆手写复现步骤，常常遗漏前置操作（如特定下拉选项或特定用户身份），导致开发人员拿到 Bug 后回复“无法复现”或反复拉扯沟通。
+- **大表单录入极其费时**：面对拥有几十甚至上百个表单项的企业级业务系统，测试人员每次都要手工填写海量数据，反复输入导致疲劳且测试用例覆盖度有限。
+- **环境账号切换繁琐**：在微服务多角色系统中，需要频繁在管理员、普通用户、审核员之间切换，账号密码输入极度浪费时间。
 
-例如：
+### 2.2 产品愿景与核心价值
 
-点击：
+**QA Copilot** 是一款专为 Web QA 工程师量身打造的 Chrome 浏览器扩展。其核心愿景不是替代 Selenium、Playwright 或 Postman 等专业自动化/接口工具，而是成为测试工程师日常工作中的 **“第二副驾驶”**，专注于消除所有低价值的机械重复劳动。
 
-> 提交订单
+> **核心价值宣言**：让 QA 工程师不再手工整理测试证据，一键生成研发无法推脱的高保真缺陷报告。
 
-500ms 后：
+| 评估维度 | 传统手工测试与提单方式 | QA Copilot 赋能模式 | 效能提升幅度 |
+| :--- | :--- | :--- | :--- |
+| **单 Bug 提交耗时** | 5 ~ 10 分钟（找接口、截屏、码字） | **< 30 秒**（一键点击「发现问题」自动打包） | **提效 90% 以上** |
+| **缺陷证据完整度** | 依赖测试人员自觉，经常漏掉 Header/Body | 自动附带点击路径、精准异常接口、完整响应体、Console 堆栈与环境信息 | **100% 完整复现链条** |
+| **大表单填单耗时** | 2 ~ 5 分钟逐项手敲 | **1 秒内** 智能推断或历史模板自动一键填入 | **提效 95%** |
+| **账号身份切换** | 记密码、登出、重新输入登录 | 侧边栏/置顶窗 **一键免密秒级切换** | **秒级切换** |
 
-> POST /api/order/create → HTTP 500
+### 2.3 产品能力边界与协同定位
 
-同时：
+QA Copilot 严格恪守专业工具边界，与测试生态形成互补协同：
 
-> Console TypeError
-
-系统自动形成关联：
-
-**点击提交订单 → 创建订单接口 500 → 页面报错**
-
----
-
-### 4. AI 测试助手
-
-AI 根据：
-
-- 当前页面
-- DOM
-- 表单字段
-- 控件类型
-- required
-- maxlength
-- min/max
-- pattern
-- API
-
-生成：
-
-- 正常场景
-- 异常场景
-- 边界测试
-- 空值测试
-- 格式测试
-- 权限测试
-- 重复数据测试
+- **专注于**：黑盒/灰盒功能测试期间的 **无感观测、证据聚合、缺陷速提、智能填表、快速登录与接口调试**。
+- **不做**：替代大规模 CI/CD 自动化流水线执行机，不做全量 API 压测平台，不做笨重的全量云端缺陷管理系统（而是无缝打通已有的禅道等企业平台）。
 
 ---
 
-# 4. 用户角色
+## 三、用户画像与典型使用场景
 
-V1 只考虑一个角色：
+### 3.1 用户角色画像
 
-## QA 工程师
+| 用户角色 | 核心工作诉求 | 使用场景 | 期望获得的体验 |
+| :--- | :--- | :--- | :--- |
+| **业务测试工程师 (QA)** | 快速覆盖功能点，发现 Bug 时迅速保留第一现场并提交，不想在写报告上花时间 | 电商交易、ERP/CRM 表单录入、权限测试、异常边界测试 | 无需开着笨重的 F12，侧边栏一目了然看到系统状态，点一次按钮完成提单 |
+| **前端 / 后端开发人员** | 快速看懂 Bug 报告，直接拿到发生报错的入参出参及堆栈，迅速定位代码行 | 缺陷修复与联调、本地排查 | 在禅道中点开 Bug 详情，就能看到整洁的步骤卡片、内嵌高清图、完整且可滑动的接口数据 |
+| **测试团队主管 (Leader)** | 提升团队整体人效，沉淀测试用例与历史缺陷模板，规范化 Bug 质量 | 质量复盘、测试规范推行、测试数据沉淀 | 规范团队提单标准，减少产研拉扯，提升跨角色沟通效率 |
 
-后期可以增加：
+### 3.2 典型端到端业务使用旅程
 
-### QA Leader
+```mermaid
+sequenceDiagram
+    autonumber
+    actor QA as QA 工程师
+    participant Ext as QA Copilot (Side Panel)
+    participant Page as 被测业务系统网页
+    participant AI as AI 大模型推理引擎
+    participant Zentao as 禅道 (ZenTao) 系统
 
-查看：
-
-- 测试 Session
-- Bug 数量
-- 高频异常
-- 测试覆盖情况
-- QA 工作量
-
-### Developer
-
-查看 QA 提交的问题上下文：
-
-- Request
-- Response
-- Console
-- 操作步骤
-- DOM 状态
-
----
-
-# 5. Chrome 插件整体结构
-
-插件采用：
-
-## Side Panel + DevTools Panel
-
----
-
-# 6. Side Panel
-
-Side Panel 是核心入口。
-
-结构：
-
-```text
-QA Copilot
-
-当前项目
-商城系统
-
-当前环境
-TEST
-
-━━━━━━━━━━━━━━
-
-● 正在测试
-
-12:35
-
-操作     18
-API      42
-异常      3
-
-━━━━━━━━━━━━━━
-
-🚨 发现问题
-
-📸 截图
-
-🧪 测试用例
-
-🎲 测试数据
-
-━━━━━━━━━━━━━━
-
-最近异常
-
-POST /order
-500
-
-GET /user
-3.2s
-
-Console
-TypeError
+    QA->>Ext: 1. 选择被测系统与环境 (TEST/SIT)，点击「开始测试」
+    activate Ext
+    Ext->>Page: 2. 注入观测探针，实时捕获 DOM、网络与控制台日志
+    QA->>Ext: 3. 在快捷登录卡片点击「采购经理」
+    Ext->>Page: 4. 自动填写账号密码并自动触发登录提交
+    QA->>Page: 5. 填写订单表单，点击插件「AI 智能填表」一键填充完整字段
+    QA->>Page: 6. 点击网页「提交订单」按钮
+    Page-->>Ext: 7. 页面弹出报错，后台拦截到 POST /api/order 返回 500
+    QA->>Ext: 8. 点击「🚨 发现问题 (生成 Bug)」
+    Ext->>Ext: 9. 自动捕获当前高清截图，提取前10步操作轨迹与异常接口
+    Ext->>AI: 10. 发送结构化摘要请求根因推理
+    AI-->>Ext: 11. 返回“库存扣减分布式锁超时异常”排查建议
+    Ext->>Ext: 12. 聚合形成卡片化富文本、完整数据与高清图
+    QA->>Ext: 13. 确认标题与指派人，点击「🚀 提交到禅道并打开」
+    Ext->>Zentao: 14. 自动创建 Bug，并在新标签页打开详情页呈现完整证据
+    deactivate Ext
 ```
 
 ---
 
-# 7. 首页
+## 四、系统总体架构设计
 
-首页主要显示当前测试状态。
+### 4.1 Chrome MV3 模块协同架构
 
-## 顶部
+QA Copilot 严格采用 Google Chrome Extension Manifest V3 现代规范开发，模块间遵循单一职责与同源安全隔离原则：
 
-显示：
+```mermaid
+graph TB
+    subgraph Top_Level ["表现与核心调度层"]
+        direction LR
+        subgraph UI_Layer ["用户界面展现层 (UI)"]
+            SidePanel["Side Panel 侧边栏<br/>(React + Tailwind CSS)"]
+            PiP["画中画独立置顶窗口<br/>(Picture-in-Picture)"]
+            FloatingHelper["页面悬浮辅助胶囊<br/>(Floating Capsule)"]
+        end
+        subgraph Chrome_Core ["浏览器核心与通信层 (Chrome MV3)"]
+            BG["Background Service Worker<br/>(常驻消息调度核心)"]
+            Storage["chrome.storage.local<br/>(轻量配置与会话状态)"]
+            Tabs["chrome.tabs / scripting API"]
+        end
+    end
 
-项目
+    subgraph Bottom_Level ["页面观测与存储服务层"]
+        direction LR
+        subgraph Page_Context ["页面运行与观测层 (Page Context)"]
+            CS["Content Script<br/>(隔离环境，DOM监听/交互代理)"]
+            Injected["Injected Script<br/>(MAIN世界，Fetch/XHR拦截)"]
+        end
+        subgraph Data_Storage ["本地存储与第三方引擎 (Local & External)"]
+            IndexedDB[("Dexie.js<br/>(IndexedDB 结构化数据库)")]
+            AI_Service["AI LLM 服务<br/>(DeepSeek / OpenAI)"]
+            Zentao_API["禅道 (ZenTao)<br/>REST API / Web 会话"]
+        end
+    end
 
-```text
-商城系统
+    SidePanel <-->|"chrome.runtime.sendMessage"| BG
+    PiP <-->|"React Portal 通信"| SidePanel
+    FloatingHelper <-->|"DOM CustomEvent"| CS
+    CS <-->|"window.postMessage"| Injected
+    CS <-->|"chrome.runtime.sendMessage"| BG
+    BG <--> Storage
+    BG <--> IndexedDB
+    SidePanel <--> IndexedDB
+    BG <-->|"HTTP / SSL"| AI_Service
+    SidePanel <-->|"HTTP REST API"| Zentao_API
+    CS <-->|"同源 Cookie 挂载"| Zentao_API
 ```
 
-环境：
+1. **Side Panel (侧边栏)**：采用 React 18 + Tailwind CSS 构建的主工作区，整合状态仪表盘、时间线、快捷登录卡片、智能填单管理与 Bug 快速编辑页。
+2. **Background Service Worker**：扩展的中枢神经系统，管理测试会话 (Session) 生命周期、跨页面数据广播、大模型 API 调用中继与长耗时任务处理。
+3. **Content Script (内容脚本)**：运行在隔离的 DOM 环境，负责用户行为事件（点击、按键输入、路由变更）的事件捕获，以及负责目标页面表单的智能填入与组件自愈。
+4. **Injected Script (注入脚本)**：注入到宿主页面的 `MAIN` 世界，通过重写原生 `window.fetch` 与 `window.XMLHttpRequest`，无死角捕获应用发生的所有网络请求入参与出参。
+5. **Dexie.js (IndexedDB)**：客户端结构化数据库，承载海量操作轨迹、网络日志、异常日志、快照及登录账号数据，不依赖云端，保障绝对数据安全。
 
-```text
-DEV
-TEST
-UAT
-PROD
-```
+---
 
-当前页面：
+## 五、核心功能模块详细需求规范
 
-```text
-/order/create
+### 5.1 全自动现场感知与事件观测录制
+
+#### 5.1.1 功能说明
+当 QA 工程师在 Side Panel 点击 **「开始测试」** 后，系统自动为当前激活标签页创建全新的测试 Session，并在后台无感且连续地捕获测试过程中的所有行为与状态。
+
+#### 5.1.2 详细捕获能力矩阵
+
+| 观测类别 | 捕获源 | 采集数据明细 | 采集规则与性能保护 |
+| :--- | :--- | :--- | :--- |
+| **DOM 交互事件** | `document.addEventListener` | 点击元素、输入内容、失焦、键盘回车、路由切换 (SPA History API) | 自动提取元素可见文本、选择器 (CSS/XPath)、组件标签 (如 el-button)；连续输入做 300ms 防抖 |
+| **网络请求拦截** | `Injected Script` 原生重写 | Method、URL、Pathname、状态码、耗时 (ms)、Request Header/Body、Response Header/Body | 内存防溢出保护：单个响应体超过 100,000 字符时做安全截断；支持 EventStream/SSE 标志识别 |
+| **控制台日志** | `console.error` 拦截 | 错误类型、完整堆栈 (Stack Trace)、调用发生时间、发生页面 | 自动过滤已知的第三方统计报错，聚焦业务代码异常 |
+| **运行时未捕获异常** | `window.onerror` / `unhandledrejection` | 异常消息、源文件名、行号列号、Promise 异常详情 | 自动关联最近 3 秒内发生的用户点击或请求操作 |
+
+#### 5.1.3 时间线 (Timeline) 聚合机制
+系统将采集到的事件按照严格的高精度时间戳归并在统一时间线上。
+
+```mermaid
+flowchart TD
+    T1["⏱️ 09:30:00 - 用户访问 /order/settle 结算页"] --> T2["⏱️ 09:30:03 - 点击下拉框「选择收货地址」"]
+    T2 --> T3["⏱️ 09:30:05 - 选中「河北省石家庄市裕华区...」"]
+    T3 --> T4["⏱️ 09:30:08 - 点击「提交订单」按钮"]
+    T4 --> T5["⚡ 09:30:09 - 触发网络请求 POST /api/order/create"]
+    T5 --> T6["❌ 09:30:10 - 接口返回 HTTP 500 (耗时 980ms)"]
+    T5 --> T7["⚠️ 09:30:10 - 触发控制台 TypeError 异常堆栈"]
 ```
 
 ---
 
-# 8. 测试 Session
+### 5.2 快捷登录与多账号角色管理
 
-QA 点击：
+#### 5.2.1 功能说明
+企业级复杂业务系统通常划分大量角色权限（如超级管理员、采购经理、财务审核员、仓库管理员）。快捷登录模块支持维护多系统、多环境账号库，并提供在被测页面一键自动填入、自动触发提交的能力。
 
-## 开始测试
-
-创建 Session。
-
-例如：
-
-```text
-Session
-
-2026-09-03
-订单创建测试
-
-开始时间
-09:32
-
-环境
-TEST
-
-URL
-test.xxx.com
-```
-
-开始记录。
+#### 5.2.2 核心特性与交互规则
+1. **多级组织结构**：支持按系统（如“供应链SCM”、“商城系统”）、环境（DEV、TEST、UAT、PROD）对账号进行树形归类。
+2. **免密级联切换**：在 Side Panel 顶部展示当前选中的系统与角色；点击“一键登录”按钮后，插件自动定位当前页面中的用户名输入框、密码输入框及登录按钮，自动派发输入事件（`input`、`change`）与点击提交事件。
+3. **暗黑级密码安全**：敏感密码采用本地对称加密存储，UI 界面默认掩码展示，不上传任何云端服务器。
 
 ---
 
-# 9. Session 时间线
+### 5.3 AI 智能填表与复杂组件交互自愈
 
-插件形成 Timeline。
+#### 5.3.1 功能说明
+针对长达数十项、具有严格格式与级联依赖的企业级表单，提供智能语义推断填表与历史模板一键复用能力，并独创了针对现代 UI 组件库的“交互自愈”机制。
 
-例如：
+#### 5.3.2 复杂表单自愈交互机制 (Self-Healing)
 
-```text
-09:32:01
-打开
-/order/create
+```mermaid
+flowchart TD
+    Start(["触发智能填表 / 历史模板一键填入"]) --> Scan["扫描页面可编辑字段，读取元数据与标签"]
+    Scan --> Branch{"字段所属组件分类"}
 
-09:32:04
-点击
-客户选择
+    subgraph Native_Path ["原生表单控件处理路径"]
+        Branch -->|"原生 Input / Textarea / Checkbox"| Direct["直接赋值并分发 input / change / blur 事件"]
+    end
 
-09:32:06
-点击
-河北钢铁集团
+    subgraph Smart_Path ["现代复杂/虚拟下拉组件自愈路径 (AntD / Element / Select2)"]
+        Branch -->|"虚拟滚动 / 懒加载下拉框"| CheckMounted{"选项浮层是否已挂载?"}
+        CheckMounted -->|"已挂载"| MatchClick["计算文本模糊匹配项，直接派发真实点击"]
+        CheckMounted -->|"未挂载/动态渲染"| TriggerOpen["模拟真实点击唤醒下拉浮层"]
+        TriggerOpen --> WaitAndSelect["智能等待浮层就绪 (100~300ms)，检索匹配项并点击"]
+        WaitAndSelect --> ClosePopper["派发 Escape 或失焦事件安全闭合浮层"]
+    end
 
-09:32:09
-输入
-数量 = 99
-
-09:32:12
-点击
-提交订单
-
-09:32:12
-POST
-/api/order/create
-
-09:32:13
-HTTP 500
-
-09:32:13
-Console Error
-TypeError
+    Direct --> Sync["触发 React / Vue 响应式受控状态更新"]
+    MatchClick --> Sync
+    ClosePopper --> Sync
+    Sync --> Finish(["表单回填成功，页面高亮提示覆盖结果"])
 ```
 
-这是整个系统非常重要的数据结构。
-
-因为以后 AI 分析、Bug 生成、回归都依赖 Timeline。
+- **组件库兼容**：无缝支持 Element UI (`el-select`、`el-cascader`、`el-date-picker`)、Element Plus、Ant Design (`ant-select`)、Vue-Treeselect 及原生 HTML5 表单。
+- **模板沉淀**：QA 可以将任意一次满意的填表状态保存为“表单用例/模板”，随时给同业务页面一键复用。
 
 ---
 
-# 10. 操作记录
+### 5.4 现场快照打包与 AI 智能根因分析
 
-默认记录：
+#### 5.4.1 功能说明
+测试人员在测试过程中发现界面出现 Bug 或数据异常时，只需点击 **「🚨 发现问题 (生成 Bug)」** 按钮，系统瞬间聚合第一现场证据并打包为快照 (Snapshot)，大模型随即对上下文进行结构化分析，输出根因推断与排查建议。
 
-### 点击
-
-记录：
-
-```json
-{
-  "type": "click",
-  "text": "提交订单",
-  "tag": "button",
-  "selector": "#submit-order"
-}
-```
-
----
-
-### 输入
-
-记录：
+#### 5.4.2 现场证据快照包含的核心要素
 
 ```text
-字段：
-商品数量
-
-值：
-99
+Bug 现场快照 (BugSnapshot)
+├── 页面基本信息: 页面 URL、Page Title、运行环境 (TEST/UAT)、浏览器内核与操作系统版本
+├── 当前登录身份: 自动提取的系统当前登录账号/角色名称
+├── 现场高清截图: 自动截取的完整可视区域 Base64 高清 PNG 图片
+├── 操作轨迹溯源: 发生异常前最近 10 步精准用户交互路径（点击某按钮、输入某文本）
+├── 关键网络证据: 发生报错的 HTTP 4xx/5xx 接口，慢接口（>2000ms），完整入参与出参
+└── 控制台报错链: 关联触发的 Console Error、Uncaught Exception 与调用堆栈
 ```
 
-密码字段不记录。
-
-支持配置敏感字段：
-
-```text
-password
-token
-secret
-身份证
-银行卡
-手机号
-```
-
-可以：
-
-不记录
-
-或者：
-
-```text
-138****1234
-```
+#### 5.4.3 AI 大模型多维度根因推断
+系统将清洗脱敏后的结构化 JSON 抛给配置好的 LLM，大模型依据上下文输出：
+1. **缺陷标题推荐**：生成简洁、客观、研发易理解的标准 Bug 标题（如 `[订单模块] 提交订单接口返回 500，提示库存扣减超时`）。
+2. **疑似根因分析**：推断是前端参数校验遗漏、接口字段契约不一致、数据库死锁还是下游第三方服务超时。
+3. **排查与修复建议**：提供开发人员检查的代码文件范围与 SQL 建议。
 
 ---
 
-# 11. Network 记录
+### 5.5 禅道 (ZenTao) 缺陷管理平台深度集成
 
-记录当前页面请求。
+#### 5.5.1 功能说明
+禅道是国内软件研发测试的主流缺陷平台。QA Copilot 实现了与禅道的深度无缝对接，实现从“发现缺陷”到“禅道有效归档”的全自动流转。
 
-字段：
-
-```text
-Method
-
-URL
-
-Status
-
-Duration
-
-Request Header
-
-Request Body
-
-Response Header
-
-Response Body
-```
-
-接口列表：
-
-```text
-全部 43
-
-成功 39
-
-4XX 1
-
-5XX 2
-
-慢接口 1
-```
+#### 5.5.2 核心特性设计
+- **研发友好卡片化排版**：正文彻底摒弃凌乱的纯文本格式，采用现代卡片化、带视觉色块与清晰边框的结构呈现：
+  - `[步骤] 重现流程`：数字列表清晰呈现前置操作；
+  - `❌ [结果] 现场异常现象`：红色醒目标注实际错误；
+  - `✅ [期望] 预期正常行为`：绿色标注业务规范；
+  - `💡 [疑似根因分析与排查建议]`：紫色专业卡片；
+  - `🖥️ [环境与页面信息]`：URL、账号、浏览器环境清晰罗列；
+  - `⚠️ [涉及的关键异常接口]`：展示接口 Method、URL、状态码及完整请求入参与出参。
+- **完整可滚动的 API 数据呈现**：放宽数据展示限制至 **50,000 字符**，代码块支持平滑纵向滚动，**杜绝 API 返回值中途被截断**，确保研发排查时拥有 100% 完整上下文。
+- **高清现场截图无缝内嵌**：自动将快照截图内嵌在禅道富文本正文中，研发人员点开 Bug 详情页即能看到高清证据图，免去手动下载附件的繁琐。
+- **同源双通道建单**：
+  - **通道 A**：支持通过禅道官方 REST API (v1 / v2) 直连建单；
+  - **通道 B (智能填单助手)**：对于网络隔离或 Token 受限的场景，提供页面悬浮胶囊一键将数据灌入禅道原生提单页。
+- **指派人与产品自动记忆**：提交成功后，自动在本地缓存上次选择的禅道产品、项目、版本与指派人，下次提单无需重复点选。
+- **一键复制 Markdown 兜底**：提供“一键复制 Markdown”独立操作，满足在飞书、企业微信、Jira 等平台快速同步沟通。
 
 ---
 
-# 12. 异常检测
+### 5.6 画中画 (PiP) 独立置顶悬浮窗体系
 
-默认识别：
+#### 5.6.1 功能说明
+侧边栏在某些小屏幕笔记本上测试全屏宽表格页面时会挤占网页宽度。QA Copilot 支持 **画中画独立置顶悬浮窗 (Document Picture-in-Picture)**。
 
-## HTTP 异常
-
-```text
-400
-401
-403
-404
-500
-502
-503
-```
+#### 5.6.2 交互优势
+- **全局永远置顶**：浮窗浮于操作系统和所有浏览器页面最上层，不会被被测系统的弹出模态框或新标签页遮挡。
+- **状态双向实时同步**：置顶窗与被测页使用统一的 React 状态模型与后台通道，在浮窗内点“快捷登录”或“发现问题”，被测页立刻执行相应动作。
 
 ---
 
-## 慢接口
+### 5.7 API 接口拦截、Mock 与单步重放调试
 
-默认：
+#### 5.7.1 功能说明
+集成轻量级且实用的网络调试套件，无需额外安装 Charles、Fiddler 或 Postman。
 
-```text
-> 2000ms
-```
-
-允许配置。
-
----
-
-## Console
-
-捕获：
-
-```text
-console.error
-```
-
-以及：
-
-```text
-Uncaught Error
-
-Unhandled Promise
-
-TypeError
-
-ReferenceError
-```
+#### 5.7.2 核心特性
+1. **网络 Mock 规则引擎**：支持针对特定 URL 正则、Method 配置模拟响应，可自定义返回 HTTP 状态码（如模拟 401、403、500）、延迟时间 (Delay) 及自定义 JSON 响应体。
+2. **接口一键重放 (Replay)**：在接口列表中，支持点击任意请求直接打开重放弹窗，修改请求 Header 与 Request Body 后一键重新发送，即时验证服务端健壮性与边界防护。
 
 ---
 
-# 13. 异常中心
+### 5.8 智能测试用例与边界数据生成
 
-页面：
+#### 5.8.1 功能说明
+利用 LLM 的逻辑推理能力，结合当前页面表单字段定义与上下文，快速衍生全面的测试用例。
 
-```text
-异常
-
-━━━━━━━━━━━━━━
-
-高
-
-POST /api/order
-HTTP 500
-
-发生时间
-09:32:13
-
-关联操作
-点击「提交订单」
-
-━━━━━━━━━━━━━━
-
-中
-
-GET /api/customer
-耗时 4200ms
-
-关联操作
-选择客户
-
-━━━━━━━━━━━━━━
-
-高
-
-TypeError
-
-Cannot read properties
-of undefined
-```
+#### 5.8.2 生成维度
+- **正常流用例**：覆盖全字段填写的 Happy Path。
+- **必填项与空值测试**：逐个验证非空约束。
+- **边界值与极值测试**：数值极大/极小、字符串超长截断、特殊字符测试。
+- **格式与合规校验**：邮箱、手机号、统一社会信用代码、身份证格式校验。
+- **安全注入测试**：典型 XSS 脚本过滤与 SQL 注入字符探测。
 
 ---
 
-# 14. 发现问题
+### 5.9 隐私合规与数据安全脱敏机制
 
-QA 一旦发现页面有问题，点击：
+#### 5.9.1 功能说明
+企业内部测试数据往往包含真实业务敏感字段，插件内置了工业级的数据脱敏引擎。
 
-# 🚨 发现问题
+#### 5.9.2 脱敏策略与拦截清单
 
-系统立即保存：
-
-问题发生前：
-
-**30～60 秒上下文**
-
-包含：
-
-- 操作
-- Network
-- Console
-- 页面
-- 截图
-
-形成：
-
-# Bug Snapshot
-
-这样 QA 即使继续测试，也不会丢失现场。
+| 敏感类别 | 匹配规则 / 字段名匹配 | 保护方式 |
+| :--- | :--- | :--- |
+| **认证与身份凭证** | `Authorization`、`Cookie`、`token`、`ticket`、`sessionId` | 发送给 AI 推理或导出时强行剔除或转为 `Bearer ******` |
+| **用户密码字段** | `password`、`passwd`、`pwd`、`secret`、`input[type="password"]` | 记录 DOM 事件时直接忽略值，显示为 `[已掩码保护]` |
+| **个人敏感身份信息** | 18 位身份证号、11 位手机号、16/19 位银行卡号 | 正则匹配自动转换为掩码：如 `138****5678`、`110101********1234` |
+| **本地存储隔离** | 全量业务数据 | 仅存储于当前浏览器的 IndexedDB 本地沙箱，无外网遥测上传 |
 
 ---
 
-# 15. Bug 编辑页面
+## 六、本地数据模型与持久化设计
 
-页面顶部：
+### 6.1 数据存储架构 (Dexie.js / IndexedDB)
 
-```text
-BUG-20260903-001
+系统基于浏览器原生 IndexedDB 构建了名为 `QACopilotDB` 的高性能离线数据库，由 Dexie.js 提供面向对象的强类型封装。
+
+```mermaid
+erDiagram
+    TEST_SESSION ||--o{ TEST_EVENT : contains
+    TEST_SESSION ||--o{ NETWORK_REQUEST : logs
+    TEST_SESSION ||--o{ ANOMALY_RECORD : detects
+    TEST_SESSION ||--o{ BUG_SNAPSHOT : creates
+    BUG_SNAPSHOT ||--o| BUG_SUBMISSION : submits
+    FORM_TEMPLATE ||--o{ TEMPLATE_FIELD : defines
+
+    TEST_SESSION {
+        string id PK
+        string title
+        string environment
+        int64 startTime
+        int64 endTime
+        string status
+    }
+
+    TEST_EVENT {
+        string id PK
+        string sessionId FK
+        string type
+        int64 timestamp
+        string targetSelector
+        string text
+    }
+
+    NETWORK_REQUEST {
+        string id PK
+        string sessionId FK
+        string method
+        string url
+        int status
+        int duration
+        string requestBody
+        string responseBody
+        boolean isError
+    }
+
+    ANOMALY_RECORD {
+        string id PK
+        string sessionId FK
+        string level
+        string title
+        int64 timestamp
+        string requestUrl
+    }
+
+    BUG_SNAPSHOT {
+        string id PK
+        string sessionId FK
+        string title
+        string url
+        string screenshotUrl
+        string aiAnalysis
+        int64 createdAt
+    }
 ```
 
----
+### 6.2 核心实体表说明
 
-## Bug 标题
-
-AI 自动生成：
-
-```text
-【订单创建】商品数量为99时提交订单出现系统异常
-```
-
-允许 QA 修改。
-
----
-
-## 严重程度
-
-AI 推荐：
-
-```text
-Blocker
-
-Critical
-
-Major
-
-Minor
-
-Suggestion
-```
-
----
-
-# 16. AI 自动生成复现步骤
-
-根据 Timeline：
-
-```text
-1. 登录测试环境
-
-2. 进入订单创建页面
-
-3. 选择客户“河北钢铁集团”
-
-4. 输入商品数量 99
-
-5. 点击“提交订单”
-
-6. 页面提示“系统异常”
-```
-
----
-
-# 17. 预期结果
-
-AI 自动生成：
-
-```text
-系统应成功创建订单。
-
-若商品库存不足，应提示明确的库存不足信息。
-```
-
----
-
-# 18. 实际结果
-
-```text
-点击提交订单后页面提示“系统异常”，订单创建失败。
-```
+1. **`sessions` (测试会话表)**：存储历次测试任务的基本元数据与统计指标。
+2. **`events` (用户交互事件表)**：存储页面点击、输入、滚动、跳转等细粒度行为。
+3. **`networkRequests` (网络流量表)**：存储双向拦截的完整 HTTP 请求、响应头与响应体。
+4. **`anomalies` (异常检测表)**：存储被规则引擎自动判定的 HTTP 错误、慢请求及 JS 异常。
+5. **`snapshots` (问题快照表)**：存储用户主动触发“发现问题”时冻结的一揽子上下文凭证与截图。
+6. **`quickLogins` (快捷登录账号表)**：存储配置的多系统多环境账号凭证与加密密码。
+7. **`formTemplates` (表单用例模板表)**：存储用户沉淀的可复用业务填单数据集。
 
 ---
 
-# 19. 技术信息
+## 七、非功能性需求 (NFR)
 
-自动添加：
+### 7.1 性能与资源消耗指标
 
-```text
-Environment
+- **探针注入耗时**：`Injected Script` 注入执行时间小于 **5ms**，对宿主网页自身加载与渲染无肉眼可见感知。
+- **网络拦截开销**：Fetch/XHR 代理层引入的单次网络吞吐额外延迟小于 **2ms**。
+- **内存占用上限**：插件整体 Background 进程内存占用稳定保持在 **60MB 以下**，单个 Session 连续记录 500 次请求时内存平稳，具备定频自动垃圾回收机制。
+- **快照生成耗时**：从点击「发现问题」到高清截图完成、数据聚合完毕并呈现在 BugEditPage 上，总耗时小于 **800ms**。
 
-TEST
+### 7.2 稳定性与错误容灾策略
 
-Browser
+- **隔离性保护**：探针运行在独立的 try-catch 沙箱内，即使宿主页面内部抛出致命异常或含有极端递归 DOM，插件自身代码绝不影响业务系统原有逻辑。
+- **网络断网容灾**：所有捕获的数据优先落入本地 IndexedDB，若在断网状态下提单失败，数据完整保存在“草稿箱”中，网络恢复后支持一键重试。
 
-Chrome 152
+### 7.3 浏览器与操作系统兼容性
 
-OS
-
-macOS
-
-Viewport
-
-1920×1080
-```
+- **支持内核**：Google Chrome 116+、Microsoft Edge (Chromium 内核) 116+。
+- **操作系统**：macOS (Apple Silicon / Intel)、Windows 10 / 11、Ubuntu Linux 20.04+。
 
 ---
 
-# 20. 关联接口
+## 八、版本规划与演进路线
 
-自动识别最可能相关的请求。
-
-例如：
-
-```text
-POST
-
-/api/order/create
-
-HTTP
-
-500
-
-Duration
-
-438ms
+```mermaid
+gantt
+    title QA Copilot 产品迭代与演进路线图
+    dateFormat  YYYY-MM-DD
+    section V1.0 基础观测与提单
+    全自动事件与网络录制        :done, des1, 2026-09-01, 2026-09-10
+    缺陷快照与基本提单          :done, des2, 2026-09-05, 2026-09-15
+    section V1.1 效能飞跃 (当前版本)
+    快捷登录与密码库            :done, des3, 2026-09-16, 2026-09-22
+    AI 智能填表与下拉自愈       :done, des4, 2026-09-20, 2026-09-26
+    禅道卡片化深度闭环          :done, des5, 2026-09-25, 2026-09-29
+    画中画独立浮窗与网络Mock    :done, des6, 2026-09-27, 2026-09-30
+    section V2.0 自动化与协作 (规划中)
+    操作轨迹一键导出 Playwright :active, des7, 2026-10-15, 2026-11-15
+    团队间共享用例库与云端同步  :des8, 2026-11-10, 2026-12-20
+    AI Agent 自主探索性测试巡检 :des9, 2026-12-01, 2027-01-30
 ```
 
-Request：
-
-```json
-{
-  "productId": 10028,
-  "quantity": 99
-}
-```
-
-Response：
-
-```json
-{
-  "code": 50001,
-  "message": "stock calculation error"
-}
-```
-
----
-
-# 21. Console 信息
-
-例如：
-
-```text
-TypeError:
-
-Cannot read properties
-of undefined
-
-OrderCreate.js:328
-```
-
----
-
-# 22. AI 初步判断
-
-AI 可以给出：
-
-```text
-疑似原因
-
-后端订单创建接口返回
-stock calculation error。
-
-前端没有正确处理该异常，
-最终向用户显示了通用
-“系统异常”。
-
-建议优先检查：
-
-1. order/create 接口库存计算逻辑
-
-2. 前端错误码映射逻辑
-```
-
-明确标记：
-
-**AI 分析，仅供参考**
-
-不能把 AI 推测当成 Bug 事实。
-
----
-
-# 23. Bug 附件
-
-默认：
-
-```text
-✓ Screenshot
-
-✓ Session Timeline
-
-✓ Network
-
-✓ Console
-
-✓ Request
-
-✓ Response
-
-✓ Environment
-```
-
-可选：
-
-```text
-HAR
-
-DOM Snapshot
-
-录像
-```
-
-录像可以放到 V1.1。
-
----
-
-# 24. 提交 Bug
-
-V1 第一阶段支持：
-
-## Copy Markdown
-
-生成：
-
-```text
-标题
-
-环境
-
-复现步骤
-
-预期结果
-
-实际结果
-
-接口
-
-Console
-
-附件
-```
-
-QA 可以粘贴到任何 Bug 系统。
-
----
-
-第二阶段支持：
-
-```text
-Jira
-
-禅道
-
-TAPD
-
-飞书
-
-Azure DevOps
-```
-
-通过 API 直接提交。
-
----
-
-# 25. AI 测试用例
-
-QA 点击：
-
-## 🧪 生成测试用例
-
-插件读取当前页面。
-
-例如：
-
-```text
-创建用户
-
-姓名 *
-
-手机号 *
-
-年龄
-
-部门
-
-用户类型
-
-状态
-```
-
-识别 DOM：
-
-```text
-姓名
-
-type=text
-required
-maxlength=50
-```
-
-手机号：
-
-```text
-required
-pattern
-```
-
-年龄：
-
-```text
-type=number
-min=0
-max=120
-```
-
----
-
-# 26. AI 输出测试点
-
-```text
-正常测试
-
-✓ 正常创建用户
-
-
-必填验证
-
-✓ 姓名为空
-
-✓ 手机号为空
-
-
-边界测试
-
-✓ 姓名49字符
-
-✓ 姓名50字符
-
-✓ 姓名51字符
-
-
-年龄
-
-✓ -1
-
-✓ 0
-
-✓ 1
-
-✓ 119
-
-✓ 120
-
-✓ 121
-
-
-格式
-
-✓ 非法手机号
-
-✓ 含字母手机号
-
-✓ 特殊字符
-
-
-业务规则
-
-✓ 重复手机号
-
-✓ 无效部门
-
-
-权限
-
-✓ 普通用户创建
-
-✓ 无权限用户创建
-```
-
----
-
-# 27. 测试数据生成器
-
-点击输入框或者右键。
-
-菜单：
-
-```text
-QA Copilot
-
-正常值
-
-空值
-
-边界值
-
-超长文本
-
-随机中文
-
-随机英文
-
-特殊字符
-
-Emoji
-
-手机号
-
-邮箱
-
-日期
-
-UUID
-
-JSON
-```
-
----
-
-# 28. 智能边界值
-
-插件读取：
-
-```html
-<input
- type="number"
- min="1"
- max="100"
-/>
-```
-
-自动提供：
-
-```text
-0
-
-1
-
-2
-
-99
-
-100
-
-101
-```
-
-这个功能非常实用。
-
----
-
-# 29. 页面元素 Inspector
-
-按：
-
-```text
-Alt + 鼠标点击
-```
-
-查看：
-
-```text
-Element
-
-button
-
-Text
-
-提交订单
-
-ID
-
-submit-order
-
-CSS
-
-#submit-order
-
-XPath
-
-//*[@id="submit-order"]
-```
-
-自动生成：
-
-### Playwright
-
-```javascript
-page.getByRole(
-  'button',
-  {
-    name: '提交订单'
-  }
-)
-```
-
-### Selenium
-
-```text
-By.id("submit-order")
-```
-
----
-
-# 30. 环境管理
-
-设置：
-
-```text
-商城项目
-
-DEV
-dev.xxx.com
-
-TEST
-test.xxx.com
-
-UAT
-uat.xxx.com
-
-PROD
-www.xxx.com
-```
-
-当前：
-
-```text
-https://test.xxx.com/order/123
-```
-
-点击：
-
-## UAT
-
-转换：
-
-```text
-https://uat.xxx.com/order/123
-```
-
----
-
-# 31. Bug 回归
-
-历史 Bug：
-
-```text
-BUG-001
-
-订单创建失败
-
-状态：
-
-待回归
-```
-
-点击：
-
-## 回归
-
-显示历史步骤：
-
-```text
-✓ 打开订单页面
-
-✓ 选择商品
-
-✓ 数量 99
-
-→ 点击提交
-```
-
-插件记录新的测试结果。
-
-Before：
-
-```text
-POST /order
-
-500
-```
-
-After：
-
-```text
-POST /order
-
-200
-```
-
-系统提示：
-
-```text
-异常已经不存在。
-
-接口：
-
-500 → 200
-
-建议结果：
-
-PASS
-```
-
-QA 最终人工确认：
-
-```text
-通过
-
-不通过
-```
-
----
-
-# 32. V1 主菜单
-
-保持非常简单：
-
-```text
-QA Copilot
-
-首页
-
-测试
-
-Bug
-
-API
-
-AI助手
-
-工具箱
-
-设置
-```
-
----
-
-# 33. 首页
-
-首页只展示：
-
-```text
-当前 Session
-
-异常数量
-
-最近异常
-
-发现问题
-
-结束测试
-```
-
-不要把首页做复杂。
-
----
-
-# 34. 测试
-
-```text
-当前测试
-
-历史 Session
-```
-
----
-
-# 35. Bug
-
-```text
-我的 Bug
-
-待回归
-```
-
----
-
-# 36. API
-
-```text
-全部请求
-
-异常请求
-
-慢请求
-```
-
-Mock 暂时放 V1.1。
-
----
-
-# 37. AI 助手
-
-```text
-生成测试用例
-
-分析当前页面
-
-分析异常
-```
-
----
-
-# 38. 工具箱
-
-```text
-测试数据
-
-Locator
-
-JSON
-
-时间戳
-
-编码转换
-```
-
----
-
-# 39. 设置
-
-```text
-项目
-
-环境
-
-AI 模型
-
-敏感信息
-
-Bug 平台
-
-接口阈值
-```
-
----
-
-# 40. 数据模型
-
-最核心有五个实体。
-
-## Project
-
-```text
-Project
-```
-
----
-
-## Environment
-
-```text
-Environment
-```
-
----
-
-## TestSession
-
-```text
-TestSession
-```
-
----
-
-## Event
-
-所有测试行为统一保存为 Event：
-
-```text
-click
-
-input
-
-navigation
-
-network
-
-console
-
-error
-
-screenshot
-```
-
----
-
-## Bug
-
-Bug 引用 Session 中的一段 Event。
-
-关系：
-
-```text
-Project
-
- └─ Environment
-
-     └─ TestSession
-
-         └─ Event
-
-             └─ Bug
-```
-
----
-
-# 41. 技术方案
-
-Chrome Extension：
-
-```text
-Manifest V3
-```
-
-前端建议：
-
-```text
-React
-
-TypeScript
-
-Vite
-```
-
-UI：
-
-```text
-Tailwind CSS
-
-shadcn/ui
-```
-
-状态：
-
-```text
-Zustand
-```
-
-本地数据：
-
-```text
-IndexedDB
-
-Dexie.js
-```
-
----
-
-# 42. Chrome 模块
-
-主要包括：
-
-```text
-Background Service Worker
-
-Content Script
-
-Side Panel
-
-DevTools Panel
-
-Injected Script
-```
-
----
-
-# 43. Content Script
-
-主要负责：
-
-```text
-DOM
-
-Click
-
-Input
-
-Navigation
-
-Element Selector
-```
-
----
-
-# 44. DevTools
-
-负责：
-
-```text
-Network
-
-HAR
-
-Response
-
-Performance
-```
-
----
-
-# 45. Background
-
-负责：
-
-```text
-Session
-
-消息通信
-
-数据持久化
-
-AI API
-
-插件生命周期
-```
-
----
-
-# 46. AI 层
-
-不要让 AI 直接处理所有原始数据。
-
-应该先把信息结构化。
-
-例如：
-
-```json
-{
-  "action": {
-    "type": "click",
-    "element": "提交订单"
-  },
-  "request": {
-    "method": "POST",
-    "url": "/order",
-    "status": 500
-  },
-  "console": [
-    "TypeError..."
-  ]
-}
-```
-
-再传给 AI。
-
-这样：
-
-- Token 少
-- 成本低
-- 速度快
-- AI 更稳定
-
----
-
-# 47. 隐私设计
-
-这是插件必须重点考虑的问题。
-
-默认禁止发送：
-
-```text
-Password
-
-Authorization
-
-Cookie
-
-Token
-
-银行卡
-
-身份证
-
-敏感字段
-```
-
-到 AI。
-
-提供：
-
-## 数据脱敏层
-
-例如：
-
-```text
-Authorization:
-
-Bearer ********
-```
-
-手机号：
-
-```text
-138****1234
-```
-
----
-
-# 48. V1 暂时不做
-
-以下功能先不要做：
-
-```text
-完整自动化测试
-
-完整 API 测试平台
-
-测试管理平台
-
-录制转 Playwright
-
-多人协作
-
-Dashboard
-
-性能测试
-
-安全扫描
-
-接口自动化
-
-AI Agent 自动操作网页
-
-大型知识库
-```
-
-这些东西非常容易把项目拖死。
-
----
-
-# 49. V1 成功标准
-
-核心指标不是功能数量。
-
-而是：
-
-## Bug 创建时间
-
-传统：
-
-```text
-5～10分钟
-```
-
-目标：
-
-```text
-< 1分钟
-```
-
----
-
-## QA 手工操作
-
-减少：
-
-```text
-截图
-
-复制接口
-
-复制 Response
-
-复制 Console
-
-写复现步骤
-
-整理浏览器信息
-```
-
----
-
-# 50. 最核心用户体验
-
-整个产品最重要的一个按钮：
-
-# 「发现问题」
-
-理想状态：
-
-QA 测试过程中看到页面异常。
-
-只需要：
-
-```text
-发现问题
-```
-
-系统就已经知道：
-
-```text
-QA之前做了什么
-
-点击了什么
-
-输入了什么
-
-调用了什么API
-
-API返回什么
-
-Console报了什么
-
-页面发生了什么
-```
-
-最终形成一个开发拿到以后：
-
-> **不用再问 QA “怎么复现？”**
-
-的高质量 Bug。
-
-这就是 QA Copilot 第一版真正需要解决的问题。
+- **当前里程碑 (V1.1)**：已全面实现“无感感知观测、极速账号切换、智能表单填入、卡片化禅道缺陷速提、独立画中画、网络单步重放”。
+- **后续规划 (V2.0)**：
+  1. **Playwright / Puppeteer 脚本一键导出**：将 Timeline 用户操作轨迹直接转化为可开箱即用的自动化端到端测试用例脚本；
+  2. **团队资产协作**：支持局域网或团队空间内快捷共享账号库与复杂表单模板；
+  3. **自主探索测试智能体 (Autonomous QA Agent)**：结合大语言模型与 DOM 视觉能力，实现对指定功能模块的无人值守巡检与异常告警。

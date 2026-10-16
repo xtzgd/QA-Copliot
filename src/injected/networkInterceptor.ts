@@ -49,7 +49,7 @@ import { matchesNetworkMockRule } from '../shared/tools/networkMock';
     if (event.source !== window || event.data?.source !== 'QA_COPILOT_CONTENT') return;
     if (event.data?.type === 'BRIDGE_READY' || event.data?.type === 'PING_INTERCEPTOR') {
       bridgeReady = true;
-      postToContentScript({ ready: true, version: '1.0.9' }, 'INTERCEPTOR_READY');
+      postToContentScript({ ready: true, version: '1.1.0' }, 'INTERCEPTOR_READY');
       while (pendingMessages.length > 0) {
         const message = pendingMessages.shift();
         if (message) window.postMessage(message, '*');

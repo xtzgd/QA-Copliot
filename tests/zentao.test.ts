@@ -37,8 +37,15 @@ describe('禅道 v2 Bug 集成', () => {
     const client = new ZentaoClient({
       baseUrl: 'https://zentao.example.com', token: 'session-token', productId: 8, openedBuild: ['trunk'],
     }, async (input, init) => {
-      requests.push({ url: String(input), init });
-      return new Response(JSON.stringify({ status: 'success', id: requests.length === 1 ? 102 : 9 }), { status: 200 });
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.includes('/bugs')) {
+        return new Response(JSON.stringify({ status: 'success', id: 102 }), { status: 201 });
+      }
+      if (url.includes('/files')) {
+        return new Response(JSON.stringify({ status: 'success', id: 9 }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ error: 1, message: 'not supported' }), { status: 404 });
     });
     const snapshot = {
       environment: 'TEST', url: 'https://test.example.com', screenshotUrl: 'data:image/png;base64,eA==',
@@ -48,21 +55,23 @@ describe('禅道 v2 Bug 集成', () => {
       title: '截图异常', severity: 'Major', reproductionSteps: [], expectedResult: '正常', actualResult: '异常',
     }, snapshot);
 
-    expect(requests[1].url).toBe('https://zentao.example.com/api.php/v2/files');
-    const form = requests[1].init?.body as FormData;
+    const fileRequest = requests.find((r) => r.url === 'https://zentao.example.com/api.php/v2/files');
+    expect(fileRequest).toBeDefined();
+    const form = fileRequest?.init?.body as FormData;
     expect(form.get('objectType')).toBe('bug');
     expect(form.get('objectID')).toBe('102');
     expect(form.get('file')).toBeInstanceOf(Blob);
     expect(result.attachmentUploaded).toBe(true);
   });
 
-  it('当附件上传返回 not allowed 时，主单成功但明确提示权限受限', async () => {
-    const requests: Array<{ url: string }> = [];
+  it('当附件上传返回 not allowed 时，主单成功但明确提示权限受限，且正文包含截图指引', async () => {
+    const requests: Array<{ url: string; body?: any }> = [];
     const client = new ZentaoClient({
       baseUrl: 'https://zentao.example.com', token: 'session-token', productId: 8, openedBuild: ['trunk'],
-    }, async (input) => {
+    }, async (input, init) => {
       const url = String(input);
-      requests.push({ url });
+      const body = init?.body ? (typeof init.body === 'string' ? JSON.parse(init.body) : init.body) : undefined;
+      requests.push({ url, body });
       if (url.includes('/bugs') && !url.includes('/files')) {
         return new Response(JSON.stringify({ status: 'success', id: 205 }), { status: 201 });
       }
@@ -76,13 +85,55 @@ describe('禅道 v2 Bug 集成', () => {
     } as BugSnapshot;
 
     const result = await client.createBug({
-      title: '权限受限提单', severity: 'Major', reproductionSteps: [], expectedResult: '正常', actualResult: '异常',
+      title: '权限受限提单', severity: 'Major', reproductionSteps: ['步骤1'], expectedResult: '正常', actualResult: '异常',
     }, snapshot);
 
     expect(result.id).toBe(205);
     expect(result.attachmentUploaded).toBe(false);
+    expect(result.attachmentEmbedded).toBe(false);
+    const bugRequest = requests.find((r) => r.url.includes('/bugs') && !r.url.includes('/files'));
+    expect(bugRequest?.body.steps).toContain('[问题现场截图]');
+    expect(bugRequest?.body.steps).toContain('<img src="data:image/png;base64,eA=="');
     expect(result.attachmentError).toContain('not allowed');
     expect(result.attachmentError).toContain('权限');
+  });
+
+  it('方案 1：调用 Web 编辑器图片接口获取本站 URL，免 API 权限成功内嵌正文大图', async () => {
+    const requests: Array<{ url: string; init?: RequestInit; body?: any }> = [];
+    const client = new ZentaoClient({
+      baseUrl: 'https://zentao.example.com', token: 'session-token', productId: 8, openedBuild: ['trunk'],
+    }, async (input, init) => {
+      const url = String(input);
+      const body = init?.body ? (typeof init.body === 'string' ? JSON.parse(init.body) : init.body) : undefined;
+      requests.push({ url, init, body });
+
+      // 1. Web 编辑器图片上传接口：模拟返回本站相对路径
+      if (url.includes('dir=image')) {
+        return new Response(JSON.stringify({ error: 0, url: '/data/upload/1/202609/site-img.png' }), { status: 200 });
+      }
+      // 2. 创建 Bug 接口
+      if (url.includes('/bugs') && !url.includes('/files')) {
+        return new Response(JSON.stringify({ status: 'success', id: 888 }), { status: 201 });
+      }
+      // 3. 独立附件接口（模拟服务端权限被拦截）
+      return new Response(JSON.stringify({ status: 'failed', error: 'not allowed' }), { status: 403 });
+    });
+
+    const snapshot = {
+      environment: 'TEST', url: 'https://test.example.com', screenshotUrl: 'data:image/png;base64,eA==',
+      browserInfo: { browserName: 'Chrome', browserVersion: '120', os: 'macOS' },
+    } as BugSnapshot;
+
+    const result = await client.createBug({
+      title: '现场大图免权限内嵌测试', severity: 'Major', reproductionSteps: ['步骤1'], expectedResult: '正常', actualResult: '异常',
+    }, snapshot);
+
+    expect(result.id).toBe(888);
+    expect(result.attachmentEmbedded).toBe(true);
+    // 验证 Bug steps 包含禅道本站安全图片绝对路径，HTMLPurifier 不会剥离
+    const bugRequest = requests.find((r) => r.url.includes('/bugs') && !r.url.includes('/files'));
+    expect(bugRequest?.body.steps).toContain('https://zentao.example.com/data/upload/1/202609/site-img.png');
+    expect(bugRequest?.body.steps).toContain('<img src="https://zentao.example.com/data/upload/1/202609/site-img.png"');
   });
 
   it('uploadScreenshot 首选端点被拒时自动尝试备用端点', async () => {
@@ -262,6 +313,71 @@ describe('禅道 v2 Bug 集成', () => {
     }, snapshot);
 
     expect(capturedBody.steps).not.toContain('[疑似根因分析与排查建议]');
+  });
+
+  it('创建 Bug 时，steps 描述中自动整合页面地址、当前登录用户以及关键异常 API 请求记录', async () => {
+    let capturedBody: any;
+    const client = new ZentaoClient({
+      baseUrl: 'https://zentao.example.com', token: 'session-token', productId: 8,
+      openedBuild: ['trunk'], projectId: 2,
+    }, async (_input, init) => {
+      capturedBody = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ status: 'success', id: 112 }), { status: 201 });
+    });
+
+    const snapshot = {
+      environment: 'TEST',
+      url: 'https://test.example.com/system/user',
+      currentUser: 'admin (若依管理员)',
+      browserInfo: { browserName: 'Chrome', browserVersion: '128', os: 'macOS' },
+      networkRequests: [
+        {
+          id: 'req-1',
+          sessionId: 'sess-1',
+          method: 'POST',
+          url: 'https://test.example.com/api/system/user/add',
+          pathname: '/api/system/user/add',
+          status: 500,
+          statusText: 'Internal Server Error',
+          startedAt: Date.now() - 1000,
+          duration: 320,
+          requestBody: '{"username":"tester_01"}',
+          responseBody: '{"code":500,"msg":"用户名已存在"}',
+          isError: true,
+          isSlow: false,
+        },
+      ],
+      consoleErrors: [
+        {
+          id: 'err-1',
+          sessionId: 'sess-1',
+          type: 'error',
+          timestamp: Date.now(),
+          title: 'Uncaught TypeError: Cannot read property',
+          description: 'TypeError: Cannot read property of undefined',
+          payload: { stack: 'TypeError: Cannot read property\n  at UserEdit.vue:42' },
+          url: 'https://test.example.com/system/user',
+        },
+      ],
+    } as unknown as BugSnapshot;
+
+    await client.createBug({
+      title: '新增用户提交失败',
+      severity: 'Critical',
+      reproductionSteps: ['进入用户管理', '点击新增', '点击确定'],
+      expectedResult: '保存成功',
+      actualResult: '页面提示 500 错误',
+    }, snapshot);
+
+    expect(capturedBody.steps).toContain('[环境与页面信息]');
+    expect(capturedBody.steps).toContain('页面地址: https://test.example.com/system/user');
+    expect(capturedBody.steps).toContain('当前登录用户: admin (若依管理员)');
+    expect(capturedBody.steps).toContain('[涉及的关键异常接口]');
+    expect(capturedBody.steps).toContain('[POST] /api/system/user/add');
+    expect(capturedBody.steps).toContain('状态: 500 Internal Server Error (耗时: 320ms)');
+    expect(capturedBody.steps).toContain('用户名已存在');
+    expect(capturedBody.steps).toContain('[控制台错误]');
+    expect(capturedBody.steps).toContain('Uncaught TypeError: Cannot read property');
   });
 
   it('创建 Bug 后通过 v2 files 接口关联上传录像附件', async () => {

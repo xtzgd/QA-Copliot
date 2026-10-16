@@ -13,9 +13,12 @@ import { describeClickElement, getElementLabel } from '../shared/tools/elementLa
 import { FormScanner } from './formScanner';
 import { FormExecutor } from './formExecutor';
 import { QuickLoginExecutor } from './quickLoginExecutor';
+import { updateTestHud, dismissTestHud } from './hud';
+import { ZentaoFillExecutor } from './zentaoFillExecutor';
 
 console.log('[QA Copilot] Content Script 注入页面:', window.location.href);
 initializeFrameGeometryRelay();
+void ZentaoFillExecutor.checkAndExecute();
 
 function publishMockRules(rules: unknown) {
   window.postMessage({ source: 'QA_COPILOT_CONTENT', type: 'MOCK_CONFIG', data: Array.isArray(rules) ? rules : [] }, '*');
@@ -97,6 +100,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     sendResponse({ ready: true, networkReady: networkInterceptorReady, url: window.location.href, title: document.title, isTopFrame });
     return false;
   }
+  if (message?.type === 'TRIGGER_ZENTAO_FILL') {
+    ZentaoFillExecutor.executeWithData(message.payload)
+      .then((success) => sendResponse({ success }))
+      .catch((err) => sendResponse({ success: false, error: (err as Error).message }));
+    return true;
+  }
   if (message?.type === 'START_ELEMENT_INSPECTION') {
     startInspection();
     sendResponse({ success: true });
@@ -104,6 +113,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   if (message?.type === 'STOP_ELEMENT_INSPECTION') {
     stopInspection();
+    sendResponse({ success: true });
+    return false;
+  }
+  if (message?.type === 'UPDATE_TEST_HUD') {
+    updateTestHud(message.payload);
+    sendResponse({ success: true });
+    return false;
+  }
+  if (message?.type === 'DISMISS_TEST_HUD') {
+    dismissTestHud(message.payload?.instant);
     sendResponse({ success: true });
     return false;
   }
@@ -224,6 +243,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .catch((err) => sendResponse({ success: false, message: (err as Error).message }));
     return true;
   }
+  if (message?.type === 'GET_PAGE_CONTEXT') {
+    if (!isTopFrame) return false;
+    sendResponse({
+      currentUser: detectCurrentUserFromPage(),
+      url: window.location.href,
+      title: document.title,
+    });
+    return true;
+  }
   if (message?.type !== 'ANALYZE_PAGE') return false;
   try {
     sendResponse({ ...DomAnalyzer.parsePageContext(document), url: window.location.href, title: document.title });
@@ -232,6 +260,60 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   return false;
 });
+
+export function detectCurrentUserFromPage(): string | undefined {
+  try {
+    // 1. DOM 探测：各大后台管理系统常见头像与用户名选择器
+    const domSelectors = [
+      '.avatar-wrapper .user-nickname',
+      '.avatar-wrapper span',
+      '.user-name',
+      '.username',
+      '.user-profile span',
+      '.user-info .name',
+      '.nickname',
+      '[class*="user-name"]',
+      '[class*="avatar-wrapper"]',
+      '[class*="user-profile"]',
+      '.right-menu .avatar-container',
+      '.el-dropdown-link .user-name',
+      '.ant-dropdown-trigger .username',
+      '.arco-dropdown-open .username',
+    ];
+    for (const sel of domSelectors) {
+      const el = document.querySelector(sel);
+      const text = el?.textContent?.trim();
+      if (text && text.length >= 2 && text.length <= 30 && !/^(登录|退出|注销|设置|修改密码)$/.test(text)) {
+        return text;
+      }
+    }
+
+    // 2. Storage 探测：localStorage 与 sessionStorage
+    const directKeys = ['username', 'userName', 'nickName', 'user_name', 'current_user', 'login_user'];
+    for (const k of directKeys) {
+      const v = localStorage.getItem(k) || sessionStorage.getItem(k);
+      if (v && typeof v === 'string' && v.trim().length >= 2 && v.trim().length <= 30) {
+        return v.trim();
+      }
+    }
+
+    const jsonKeys = ['user', 'userInfo', 'USER_INFO', 'currentUser', 'loginUser', 'admin_user', 'vuex'];
+    for (const k of jsonKeys) {
+      const raw = localStorage.getItem(k) || sessionStorage.getItem(k);
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          const userObj = parsed?.user?.user || parsed?.user || parsed?.userInfo || parsed;
+          const candidate = userObj?.nickName || userObj?.nickname || userObj?.userName || userObj?.username || userObj?.name || userObj?.realName;
+          if (candidate && typeof candidate === 'string' && candidate.trim().length >= 2 && candidate.trim().length <= 30) {
+            return candidate.trim();
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+  return undefined;
+}
 
 // 1. 接收来自 Injected Script (MAIN world) 的消息并中继给 Background
 window.addEventListener('message', (event) => {
@@ -394,6 +476,117 @@ function getActiveDropdownPoppers(): HTMLElement[] {
 }
 
 /**
+ * 安全平滑收起展开的下拉浮层，具备严格的模态弹窗保护 (Modal Close Guard)
+ * 绝对严禁派发全局 Escape，严防意外触发 Dialog/Modal/Drawer 的关闭！
+ */
+function safeCloseDropdownPopper(optionEl?: HTMLElement) {
+  try {
+    const activePoppers = getActiveDropdownPoppers();
+    if (activePoppers.length === 0) return;
+
+    // 0. 若传入了选项元素，优先查找该选项所属 popper 关联的 select 触发器并失焦
+    if (optionEl) {
+      const parentPopper = optionEl.closest?.(
+        '.el-select-dropdown, .ant-select-dropdown, .arco-select-dropdown, .vue-treeselect__menu, [class*="select-dropdown"]'
+      );
+      if (parentPopper?.id) {
+        const associatedTrigger = document.querySelector<HTMLElement>(
+          `[aria-controls="${parentPopper.id}"], [aria-owns="${parentPopper.id}"], [data-popper-id="${parentPopper.id}"]`
+        );
+        const input = associatedTrigger?.querySelector<HTMLInputElement | HTMLElement>('input, .el-select__input');
+        if (input && typeof input.blur === 'function') {
+          input.blur();
+        }
+      }
+    }
+
+    // 1. 尝试让当前激活的下拉输入框失焦 (blur)
+    // 现代组件库在选项所属的下拉框展开时，对应的 select 会带有 is-focus / is-focused / ant-select-open
+    const activeSelects = Array.from(document.querySelectorAll<HTMLElement>(
+      '.el-select.is-focus, .el-select__wrapper.is-focused, .ant-select-open, .arco-select-open, .n-select--active, .vue-treeselect--is-open, [role="combobox"][aria-expanded="true"]'
+    ));
+
+    for (const select of activeSelects) {
+      const input = select.querySelector<HTMLInputElement | HTMLElement>('input, .el-select__input, [tabindex]');
+      if (input && typeof input.blur === 'function') {
+        input.blur();
+      }
+    }
+
+    // 2. 检查当前页面是否存在活动弹窗 / 模态抽屉 (Modal / Dialog / Drawer)
+    const activeModals = getActiveModalContainers();
+    if (activeModals.length > 0) {
+      // 关键防线：若有弹窗，绝对不能在 window / document 上派发 Escape，也绝对不点击遮罩层！
+      // 我们在当前活动弹窗内部选取一个绝对安全的静态非交互节点（如标题栏纯文本 .el-dialog__title），
+      // 派发冒泡的鼠标/指针事件（target 为弹窗标题本身，绝非遮罩层），
+      // 这能完美触发下拉浮层在 document 上监听的 clickoutside 指令收起浮层，
+      // 同时弹窗的遮罩判定（e.target === overlay）完全不匹配，键盘 Escape 也完全不触发，弹窗 100% 稳如磐石！
+      const topModal = activeModals[activeModals.length - 1];
+      let safeTarget = topModal.querySelector<HTMLElement>(
+        '.el-dialog__title, .el-drawer__title, .ant-modal-title, .ant-drawer-title, .modal-title, .arco-modal-title'
+      );
+      if (!safeTarget) {
+        // 若无特定标题类，找 header 区域内的纯文本或非可点击子元素，严格排除关闭按钮
+        const header = topModal.querySelector<HTMLElement>(
+          '.el-dialog__header, .el-drawer__header, .ant-modal-header, .modal-header, .arco-modal-header'
+        );
+        if (header) {
+          safeTarget = header.querySelector<HTMLElement>(
+            'span, p, h1, h2, h3, h4, h5, div:not([role="button"]):not([class*="close"])'
+          ) || header;
+        }
+      }
+      if (!safeTarget) {
+        // 若连 header 都没有，找 body 内首个非 interactive 容器
+        const body = topModal.querySelector<HTMLElement>(
+          '.el-dialog__body, .el-drawer__body, .ant-modal-body, .modal-body, .arco-modal-body'
+        );
+        if (body) {
+          safeTarget = body;
+        } else {
+          safeTarget = topModal;
+        }
+      }
+
+      const mouseOpts: MouseEventInit = { bubbles: true, cancelable: true, view: window };
+      try {
+        if (typeof PointerEvent !== 'undefined') {
+          safeTarget.dispatchEvent(new PointerEvent('pointerdown', mouseOpts));
+        }
+      } catch {}
+      try {
+        if (typeof MouseEvent !== 'undefined') {
+          safeTarget.dispatchEvent(new MouseEvent('mousedown', mouseOpts));
+          safeTarget.dispatchEvent(new MouseEvent('mouseup', mouseOpts));
+          safeTarget.dispatchEvent(new MouseEvent('click', mouseOpts));
+        } else if (typeof CustomEvent !== 'undefined') {
+          safeTarget.dispatchEvent(new CustomEvent('click', mouseOpts));
+        }
+      } catch {}
+    } else {
+      // 3. 无弹窗时（普通主页面），在 document.body 上派发安全点击触发 clickoutside
+      const mouseOpts: MouseEventInit = { bubbles: true, cancelable: true, view: window };
+      try {
+        if (typeof PointerEvent !== 'undefined') {
+          document.body.dispatchEvent(new PointerEvent('pointerdown', mouseOpts));
+        }
+      } catch {}
+      try {
+        if (typeof MouseEvent !== 'undefined') {
+          document.body.dispatchEvent(new MouseEvent('mousedown', mouseOpts));
+          document.body.dispatchEvent(new MouseEvent('mouseup', mouseOpts));
+          document.body.dispatchEvent(new MouseEvent('click', mouseOpts));
+        } else if (typeof CustomEvent !== 'undefined') {
+          document.body.dispatchEvent(new CustomEvent('click', mouseOpts));
+        }
+      } catch {}
+    }
+  } catch (e) {
+    console.warn('[QA Copilot] 安全收起下拉浮层异常:', e);
+  }
+}
+
+/**
  * 识别当前页面中所有处于活动/展开展示状态的日期与日历选择器浮层容器
  */
 function getActiveDatePickerPoppers(): HTMLElement[] {
@@ -465,6 +658,10 @@ export function collectAiObservation() {
 
   const allRaw = Array.from(document.querySelectorAll(selector));
 
+  const isQaCopilotElement = (el: HTMLElement | Element) => Boolean(
+    el.closest?.('[data-qa-copilot-root], [data-qa-copilot-hud]')
+  );
+
   // 区域感知辅助判断
   const isHeaderEl = (el: HTMLElement | Element) => Boolean(
     el.closest?.('header, .navbar, .top-bar, .topbar, .right-menu, .header-tools, .header-right, #screenfull, #size-select, .global-header, .ant-layout-header, .el-header')
@@ -489,7 +686,7 @@ export function collectAiObservation() {
     const mainCandidates: HTMLElement[] = [];
     const backgroundCandidates: HTMLElement[] = [];
     for (const el of allRaw) {
-      if (!el) continue;
+      if (!el || isQaCopilotElement(el)) continue;
       const inPopper = hasActivePopper && activePoppers.some((p) => p.contains?.(el));
       const inModal = hasActiveModal && activeModals.some((m) => m.contains?.(el));
       if (inPopper) {
@@ -511,7 +708,7 @@ export function collectAiObservation() {
     const otherCandidates: HTMLElement[] = [];
 
     for (const el of allRaw) {
-      if (!el) continue;
+      if (!el || isQaCopilotElement(el)) continue;
       if (isHeaderEl(el)) {
         headerCandidates.push(el as HTMLElement);
       } else if (isSidebarEl(el)) {
@@ -589,12 +786,14 @@ export function collectAiObservation() {
     const isDropdownOption = !isInSidebar && (
       inPopper ||
       Boolean(
-        element.closest('.el-select-dropdown, .ant-select-dropdown, .arco-select-dropdown, .vue-treeselect__menu, .vue-treeselect__menu-container, .vue-treeselect__portal-container, .el-tree-select__popper, .el-cascader__dropdown, [class*="select-dropdown"], [class*="treeselect__menu"]') ||
+        element.closest('.el-select-dropdown, .ant-select-dropdown, .arco-select-dropdown, .vue-treeselect__menu, .vue-treeselect__menu-container, .vue-treeselect__portal-container, .el-tree-select__popper, .el-select__popper, .el-popper, .el-cascader__dropdown, [class*="select-dropdown"], [class*="treeselect__menu"], [class*="tree-select"]') ||
         element.classList?.contains('el-select-dropdown__item') ||
         element.classList?.contains('ant-select-item-option') ||
         element.classList?.contains('arco-select-option') ||
         element.classList?.contains('vue-treeselect__option') ||
         element.classList?.contains('vue-treeselect__label') ||
+        element.classList?.contains('el-tree-node__content') ||
+        element.classList?.contains('el-tree-node') ||
         element.classList?.contains('el-cascader-node') ||
         (element.getAttribute('role') === 'option' && !element.closest('aside, .sidebar'))
       )
@@ -652,15 +851,34 @@ export function collectAiObservation() {
         val = (element as HTMLInputElement).value ? '******' : undefined;
       }
     }
-    // 读取现代组件库已选中的回显文字 (如 "科技" 或 "男")
-    if (isDropdownTrigger && !val) {
-      const selectedItemEl = element.querySelector(
-        '.el-select__selected-item, .ant-select-selection-item, .arco-select-view-value, [class*="selected-item"]'
-      );
-      if (selectedItemEl) {
-        const selText = selectedItemEl.textContent?.trim();
-        if (selText && !selText.startsWith('请选择')) {
-          val = selText;
+
+    const isMultiple = Boolean(
+      element.classList?.contains('is-multiple') ||
+      element.classList?.contains('el-select--multiple') ||
+      element.classList?.contains('ant-select-multiple') ||
+      element.querySelector('.el-select__tags, .ant-select-selection-overflow, .vue-treeselect__multi-value')
+    );
+
+    // 读取现代组件库已选中的回显文字 (包括单选文本与多选 Tag 列表)
+    if (isDropdownTrigger) {
+      if (!val) {
+        const selectedItemEl = element.querySelector(
+          '.el-select__selected-item, .ant-select-selection-item, .arco-select-view-value, .vue-treeselect__single-value, [class*="selected-item"]'
+        );
+        if (selectedItemEl) {
+          const selText = selectedItemEl.textContent?.trim();
+          if (selText && !selText.startsWith('请选择')) {
+            val = selText;
+          }
+        }
+      }
+      if (!val || isMultiple) {
+        const tagEls = Array.from(element.querySelectorAll(
+          '.el-select__tags .el-tag, .el-select__tags-text, .ant-select-selection-overflow-item, .vue-treeselect__multi-value-item, .arco-tag, [class*="select__tags"] [class*="tag"]'
+        ));
+        const tags = Array.from(new Set(tagEls.map((t) => t.textContent?.trim()).filter(Boolean)));
+        if (tags.length > 0) {
+          val = tags.join(', ');
         }
       }
     }
@@ -670,12 +888,30 @@ export function collectAiObservation() {
 
     if (isDropdownOption) {
       inferredRole = 'option';
-      name = `[当前下拉选项] ${rawText || name || '选项'}`;
-      text = `[当前下拉选项] ${rawText || name || '选项'}`;
+      const isTreeOption = Boolean(
+        element.classList?.contains('el-tree-node__content') ||
+        element.classList?.contains('vue-treeselect__label') ||
+        element.classList?.contains('el-tree-node') ||
+        element.closest('.vue-treeselect__menu, .el-tree-select__popper, .ant-tree-select-dropdown, .el-tree')
+      );
+      const isSelected = Boolean(
+        element.classList?.contains('is-selected') ||
+        element.classList?.contains('selected') ||
+        element.getAttribute('aria-selected') === 'true' ||
+        element.closest('.vue-treeselect__option--selected, .el-select-dropdown__item.is-selected')
+      );
+      const selectedFlag = isSelected ? ' [已勾选]' : '';
+      const optionPrefix = isTreeOption ? '[当前树节点选项]' : '[当前下拉选项]';
+      name = `${optionPrefix} ${rawText || name || '选项'}${selectedFlag}`;
+      text = `${optionPrefix} ${rawText || name || '选项'}${selectedFlag}`;
     } else if (isDropdownTrigger) {
       inferredRole = 'combobox';
-      if (name && !name.includes('下拉框') && !name.includes('选择')) {
-        name = `[下拉框] ${name}`;
+      const cleanName = (name || '').replace(/\[(?:多选)?下拉框\]\s*/g, '');
+      const valInfo = val ? ` (当前已选: ${val})` : '';
+      if (isMultiple) {
+        name = `[多选下拉框] ${cleanName}${valInfo}`;
+      } else {
+        name = `[下拉框] ${cleanName}${valInfo}`;
       }
       text = rawText ? (inModal ? `[弹窗内] ${rawText}` : rawText) : undefined;
     } else {
@@ -1739,24 +1975,44 @@ function tryHealAndOpenDatePicker(event: QAEvent): boolean {
 }
 
 function dispatchClick(target: HTMLElement) {
-  // 1. 如果点击的是折叠/菜单容器，优先点击其内部的标题交互节点
-  let trigger = target.querySelector?.(
-    '.el-submenu__title, .ant-menu-submenu-title, .arco-menu-inline-header, [class*="submenu__title"], [class*="submenu-title"], [class*="collapse-item__header"], [class*="collapse-header"]'
-  ) as HTMLElement | null;
+  // 关键保护：若点击的目标本身就是下拉选项、树选项、树节点文字或级联选项，绝对不能重定向到外层 select 触发器！
+  const isOptionLike = Boolean(
+    target.getAttribute?.('role') === 'option' ||
+    target.getAttribute?.('role') === 'treeitem' ||
+    target.classList?.contains('el-select-dropdown__item') ||
+    target.classList?.contains('ant-select-item-option') ||
+    target.classList?.contains('arco-select-option') ||
+    target.classList?.contains('vue-treeselect__option') ||
+    target.classList?.contains('vue-treeselect__label') ||
+    target.classList?.contains('vue-treeselect__option-arrow') ||
+    target.classList?.contains('el-tree-node__content') ||
+    target.classList?.contains('el-tree-node__label') ||
+    target.classList?.contains('el-tree-node__expand-icon') ||
+    target.classList?.contains('el-cascader-node') ||
+    Boolean(target.closest?.('.el-select-dropdown, .ant-select-dropdown, .vue-treeselect__menu, .vue-treeselect__menu-container, .vue-treeselect__portal-container, .el-tree-select__popper, .el-select__popper, .el-cascader__dropdown, [class*="select-dropdown"], [class*="treeselect__menu"]'))
+  );
 
-  // 2. 双向查找下拉框交互触发器（向上或向下）
-  const selectContainer = target.closest?.(
-    '.el-select, .ant-select, [role="combobox"], .n-select, .arco-select, [class*="select-trigger"]'
-  ) as HTMLElement | null;
-
-  if (!trigger && selectContainer) {
-    trigger = (selectContainer.querySelector?.(
-      '.el-select__wrapper, .select-trigger, .ant-select-selector, .arco-select-view, .el-input__inner, input'
-    ) || selectContainer) as HTMLElement | null;
-  } else if (!trigger && (target.classList?.contains('el-select') || target.classList?.contains('ant-select') || target.getAttribute?.('role') === 'combobox')) {
+  let trigger: HTMLElement | null = null;
+  if (!isOptionLike) {
+    // 1. 如果点击的是折叠/菜单容器，优先点击其内部的标题交互节点
     trigger = target.querySelector?.(
-      '.el-select__wrapper, .select-trigger, .ant-select-selector, .el-input__inner, input'
+      '.el-submenu__title, .ant-menu-submenu-title, .arco-menu-inline-header, [class*="submenu__title"], [class*="submenu-title"], [class*="collapse-item__header"], [class*="collapse-header"]'
     ) as HTMLElement | null;
+
+    // 2. 双向查找下拉框交互触发器（向上或向下）
+    const selectContainer = target.closest?.(
+      '.el-select, .ant-select, [role="combobox"], .n-select, .arco-select, [class*="select-trigger"]'
+    ) as HTMLElement | null;
+
+    if (!trigger && selectContainer) {
+      trigger = (selectContainer.querySelector?.(
+        '.el-select__wrapper, .select-trigger, .ant-select-selector, .arco-select-view, .el-input__inner, input'
+      ) || selectContainer) as HTMLElement | null;
+    } else if (!trigger && (target.classList?.contains('el-select') || target.classList?.contains('ant-select') || target.getAttribute?.('role') === 'combobox')) {
+      trigger = target.querySelector?.(
+        '.el-select__wrapper, .select-trigger, .ant-select-selector, .el-input__inner, input'
+      ) as HTMLElement | null;
+    }
   }
 
   const clickNode = trigger || target;
@@ -1980,12 +2236,43 @@ export async function replayAction(
       if ('disabled' in htmlTarget && Boolean((htmlTarget as HTMLButtonElement).disabled)) {
         return { success: false, error: `元素已禁用不可点击：${event.description}` };
       }
+
+      const isOptionLike = Boolean(
+        htmlTarget.getAttribute?.('role') === 'option' ||
+        htmlTarget.classList?.contains('el-select-dropdown__item') ||
+        htmlTarget.classList?.contains('ant-select-item-option') ||
+        htmlTarget.classList?.contains('arco-select-option') ||
+        htmlTarget.classList?.contains('vue-treeselect__option') ||
+        htmlTarget.classList?.contains('vue-treeselect__label') ||
+        htmlTarget.closest?.('.el-select-dropdown, .ant-select-dropdown, .vue-treeselect__menu, .vue-treeselect__menu-container, [class*="select-dropdown"]')
+      );
+
+      // 遮挡防护：若准备点击的是非下拉浮层内的普通元素（如弹窗底部的确定/保存按钮，或其他表单输入框），
+      // 且页面有展开的下拉浮层，在点击前先安全平滑收起浮层，消除物理覆盖与遮挡，绝对不误关弹窗！
+      if (!isOptionLike) {
+        const activePoppers = getActiveDropdownPoppers();
+        if (activePoppers.length > 0 && !activePoppers.some((p) => p.contains(htmlTarget))) {
+          safeCloseDropdownPopper(htmlTarget);
+          await new Promise((resolve) => setTimeout(resolve, 80));
+        }
+      }
+
       if (useCdp) {
         const cdpInput = await createCdpInputAction(htmlTarget, 'click');
         if (!cdpInput) return { success: false, error: '无法计算 iframe 内元素的顶层点击坐标' };
+        if (isOptionLike) {
+          window.setTimeout(() => {
+            safeCloseDropdownPopper(htmlTarget);
+          }, 180);
+        }
         return { success: true, cdpInput };
       }
       dispatchClick(htmlTarget);
+      if (isOptionLike) {
+        window.setTimeout(() => {
+          safeCloseDropdownPopper(htmlTarget);
+        }, 120);
+      }
     } else {
       const input = target as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
       const payload = event.payload as InputEventPayload;

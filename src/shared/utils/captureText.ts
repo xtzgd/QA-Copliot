@@ -1,4 +1,4 @@
-export function captureText(value: unknown, maxLength = 20_000): string {
+export function captureText(value: unknown, maxLength = 100_000): string {
   if (value === undefined || value === null) return '';
   if (typeof value === 'string') return value.slice(0, maxLength);
 

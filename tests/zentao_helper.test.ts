@@ -61,6 +61,20 @@ describe('禅道辅助工具 zentaoHelper', () => {
     });
   });
 
+  describe('getZentaoBugCreatePageUrl 提单页面 URL 构造', () => {
+    it('正确根据 productId 构造原生提单页 URL', async () => {
+      const { getZentaoBugCreatePageUrl } = await import('../src/shared/integrations/zentaoHelper');
+      const url1 = getZentaoBugCreatePageUrl('https://zentao.hbisscm.com', 5);
+      expect(url1).toBe('https://zentao.hbisscm.com/bug-create-5.html');
+
+      const url2 = getZentaoBugCreatePageUrl('https://zentao.hbisscm.com/zentao/', 12, 108);
+      expect(url2).toBe('https://zentao.hbisscm.com/zentao/bug-create-12-0-108.html');
+
+      const url3 = getZentaoBugCreatePageUrl('zentao.hbisscm.com', 0);
+      expect(url3).toBe('https://zentao.hbisscm.com/index.php?m=bug&f=create');
+    });
+  });
+
   describe('detectBrowserZentao 浏览器会话与标签页探测', () => {
     const originalChrome = (globalThis as any).chrome;
 

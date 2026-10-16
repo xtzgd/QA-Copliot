@@ -30,7 +30,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
-import { AIProviderMode, aiProviderService } from '../../ai';
+import { AIProviderMode, aiProviderService, LlmEndpointType, normalizeLlmEndpoint } from '../../ai';
 import { ZentaoClient, ZentaoProductItem, ZentaoProjectItem, ZentaoBuildItem, ZentaoUserItem } from '../../shared/integrations/zentao';
 import {
   normalizeZentaoUrl,
@@ -53,17 +53,24 @@ export const SettingsPage: React.FC = () => {
   // 1. 采集设置
   const [slowThresholdMs, setSlowThresholdMs] = useState(2000);
 
-  // 2. 智能生成大模型配置 (Base URL + API Key + Model)
+  // 2. 智能生成大模型配置 (Base URL + API Key + Model + 补全模式)
   const [aiProviderMode, setAiProviderMode] = useState<AIProviderMode>('heuristic');
   const [aiBaseUrl, setAiBaseUrl] = useState('https://api.deepseek.com/v1');
   const [aiApiKey, setAiApiKey] = useState('');
   const [aiModel, setAiModel] = useState('deepseek-chat');
+  const [aiEndpointType, setAiEndpointType] = useState<LlmEndpointType>('chat');
+  const [aiTimeoutSeconds, setAiTimeoutSeconds] = useState(60);
   const [showAiKey, setShowAiKey] = useState(false);
   const [aiBugAssistanceEnabled, setAiBugAssistanceEnabled] = useState(true);
   const [aiVisionEnabled, setAiVisionEnabled] = useState(true);
   const [aiTesting, setAiTesting] = useState(false);
   const [aiTestResult, setAiTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const aiProbeIdRef = useRef(0);
+
+  // 可用模型列表查询状态
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [availableModels, setAvailableModels] = useState<Array<{ id: string; name?: string }>>([]);
+  const [modelsFetchError, setModelsFetchError] = useState<string | null>(null);
 
   // 3. 禅道集成配置
   const [zentaoBaseUrl, setZentaoBaseUrl] = useState('https://zentao.hbisscm.com');
@@ -128,6 +135,8 @@ export const SettingsPage: React.FC = () => {
         aiApiKey: '',
         aiModel: 'deepseek-chat',
         aiRemoteEndpoint: '',
+        aiEndpointType: 'chat',
+        aiTimeoutSeconds: 60,
         aiBugAssistanceEnabled: true,
         aiVisionEnabled: true,
         zentaoBaseUrl: 'https://zentao.hbisscm.com',
@@ -146,6 +155,9 @@ export const SettingsPage: React.FC = () => {
         setAiBaseUrl(effectiveBaseUrl);
         setAiApiKey(String(result.aiApiKey || ''));
         setAiModel(String(result.aiModel || 'deepseek-chat'));
+        const savedEndpointType = (['chat', 'responses', 'none'].includes(result.aiEndpointType) ? result.aiEndpointType : 'chat') as LlmEndpointType;
+        setAiEndpointType(savedEndpointType);
+        setAiTimeoutSeconds(Number(result.aiTimeoutSeconds) || 60);
         setAiBugAssistanceEnabled(result.aiBugAssistanceEnabled !== false);
         setAiVisionEnabled(result.aiVisionEnabled !== false);
         const savedUrl = String(result.zentaoBaseUrl || 'https://zentao.hbisscm.com');
@@ -225,12 +237,15 @@ export const SettingsPage: React.FC = () => {
       setToastMessage('请先填写大模型 API 地址 (Base URL)');
       return;
     }
+    const safeTimeout = Math.max(10, Math.min(300, Number(aiTimeoutSeconds) || 60));
     await chrome.storage.local.set({
       aiProviderMode,
       aiBaseUrl: aiBaseUrl.trim(),
       aiApiKey: aiApiKey.trim(),
       aiModel: aiModel.trim() || 'deepseek-chat',
       aiRemoteEndpoint: aiBaseUrl.trim(), // 保持旧字段同步
+      aiEndpointType,
+      aiTimeoutSeconds: safeTimeout,
       aiBugAssistanceEnabled,
       aiVisionEnabled,
     });
@@ -238,6 +253,8 @@ export const SettingsPage: React.FC = () => {
       baseUrl: aiBaseUrl.trim(),
       apiKey: aiApiKey.trim(),
       model: aiModel.trim() || 'deepseek-chat',
+      endpointType: aiEndpointType,
+      timeoutMs: safeTimeout * 1000,
     });
     setToastMessage('智能生成大模型配置已成功保存！');
   };
@@ -320,6 +337,7 @@ export const SettingsPage: React.FC = () => {
       if ('aiBaseUrl' in localSettings) setAiBaseUrl(localSettings.aiBaseUrl);
       if ('aiApiKey' in localSettings) setAiApiKey(localSettings.aiApiKey);
       if ('aiModel' in localSettings) setAiModel(localSettings.aiModel);
+      if ('aiEndpointType' in localSettings) setAiEndpointType(localSettings.aiEndpointType);
       if ('aiBugAssistanceEnabled' in localSettings) setAiBugAssistanceEnabled(localSettings.aiBugAssistanceEnabled !== false);
       if ('zentaoBaseUrl' in localSettings) setZentaoBaseUrl(localSettings.zentaoBaseUrl);
       if ('zentaoAuthMode' in localSettings) setZentaoAuthMode(localSettings.zentaoAuthMode);
@@ -353,6 +371,7 @@ export const SettingsPage: React.FC = () => {
         baseUrl: aiBaseUrl.trim(),
         apiKey: aiApiKey.trim(),
         model: aiModel.trim() || 'deepseek-chat',
+        endpointType: aiEndpointType,
       });
       if (probeId !== aiProbeIdRef.current) return;
       if (res.success) {
@@ -370,6 +389,32 @@ export const SettingsPage: React.FC = () => {
       if (probeId === aiProbeIdRef.current) {
         setAiTesting(false);
       }
+    }
+  };
+
+  // 查询可用模型列表 (GET /v1/models)
+  const handleFetchModels = async () => {
+    if (!aiBaseUrl.trim()) {
+      setToastMessage('请先填写大模型 API 地址 (Base URL)');
+      return;
+    }
+    setFetchingModels(true);
+    setModelsFetchError(null);
+    try {
+      const res = await aiProviderService.fetchAvailableModels({
+        baseUrl: aiBaseUrl.trim(),
+        apiKey: aiApiKey.trim(),
+      });
+      if (res.success && res.models && res.models.length > 0) {
+        setAvailableModels(res.models);
+        setToastMessage(`成功获取 ${res.models.length} 个可用模型！`);
+      } else {
+        setModelsFetchError(res.error || '未查询到可用模型列表');
+      }
+    } catch (err) {
+      setModelsFetchError((err as Error).message || '查询可用模型失败');
+    } finally {
+      setFetchingModels(false);
     }
   };
 
@@ -1411,11 +1456,11 @@ export const SettingsPage: React.FC = () => {
 
         {aiProviderMode === 'remote' && (
           <div className="flex flex-col gap-2.5 pt-1">
-            {/* 1. Base URL */}
-            <div className="flex flex-col gap-1">
+            {/* 1. Base URL 与端点补全选择 */}
+            <div className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between text-[11px] font-medium text-slate-600">
                 <span>大模型接口地址 (Base URL)</span>
-                <span className="text-[10px] text-slate-400">自动补齐 /chat/completions</span>
+                <span className="text-[10px] text-slate-400">支持官方及中转站</span>
               </div>
               <input
                 type="url"
@@ -1425,13 +1470,67 @@ export const SettingsPage: React.FC = () => {
                   aiProbeIdRef.current++;
                   setAiTesting(false);
                   setAiTestResult(null);
+                  setAvailableModels([]);
+                  setModelsFetchError(null);
                 }}
-                placeholder="https://api.deepseek.com/v1"
+                placeholder="例如: https://aihub.top 或 https://api.openai.com"
                 className="p-2 border border-slate-200 rounded-lg text-xs bg-slate-50 font-mono focus:bg-white focus:border-purple-500 transition-colors"
               />
-              <span className="text-[10px] text-slate-400">
-                支持标准 OpenAI 协议网关，如 DeepSeek、OpenAI、阿里云百炼、Kimi、Local Ollama 等。
-              </span>
+
+              {/* 补全模式选择器 */}
+              <div className="flex flex-col gap-1.5 bg-slate-50/80 p-2 rounded-lg border border-slate-200/80">
+                <div className="flex items-center justify-between flex-wrap gap-1">
+                  <span className="text-[10px] text-slate-600 font-medium">端点补全模式：</span>
+                  <div className="flex items-center gap-1 bg-slate-200/60 p-0.5 rounded-md">
+                    <button
+                      type="button"
+                      onClick={() => setAiEndpointType('chat')}
+                      className={`px-2 py-0.5 rounded text-[10px] transition-all ${
+                        aiEndpointType === 'chat'
+                          ? 'bg-white text-purple-700 font-semibold shadow-xs'
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                      title="自动补全为 /chat/completions（绝大多数中转站与官方标准）"
+                    >
+                      /chat/completions
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAiEndpointType('responses')}
+                      className={`px-2 py-0.5 rounded text-[10px] transition-all ${
+                        aiEndpointType === 'responses'
+                          ? 'bg-white text-purple-700 font-semibold shadow-xs'
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                      title="自动补全为 /responses（OpenAI 最新的 Responses API）"
+                    >
+                      /responses
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAiEndpointType('none')}
+                      className={`px-2 py-0.5 rounded text-[10px] transition-all ${
+                        aiEndpointType === 'none'
+                          ? 'bg-white text-purple-700 font-semibold shadow-xs'
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                      title="不自动补全，完全直接使用你输入的完整地址"
+                    >
+                      不补全 (原样)
+                    </button>
+                  </div>
+                </div>
+
+                {/* 动态计算并展示实际发出的请求地址预览 */}
+                {aiBaseUrl.trim() && (
+                  <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-mono bg-white px-2 py-1 rounded border border-slate-200/60 overflow-x-auto whitespace-nowrap">
+                    <span className="text-purple-600 font-semibold shrink-0">实际请求端点:</span>
+                    <span className="text-slate-700 select-all font-medium">
+                      {normalizeLlmEndpoint(aiBaseUrl, aiEndpointType)}
+                    </span>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* 2. API Key */}
@@ -1449,6 +1548,8 @@ export const SettingsPage: React.FC = () => {
                     aiProbeIdRef.current++;
                     setAiTesting(false);
                     setAiTestResult(null);
+                    setAvailableModels([]);
+                    setModelsFetchError(null);
                   }}
                   placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
                   autoComplete="off"
@@ -1465,15 +1566,30 @@ export const SettingsPage: React.FC = () => {
               </div>
             </div>
 
-            {/* 3. Model 名称与快捷预选 */}
+            {/* 3. Model 名称与查询可用模型 */}
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between text-[11px] font-medium text-slate-600">
                 <div className="flex items-center gap-1">
                   <Bot className="w-3.5 h-3.5 text-purple-600" />
                   <span>模型名称 (Model)</span>
                 </div>
-                <span className="text-[10px] text-slate-400">可手动输入或点击下方快速选用</span>
+                {/* 查询可用模型按钮 */}
+                <button
+                  type="button"
+                  onClick={handleFetchModels}
+                  disabled={fetchingModels || !aiBaseUrl.trim()}
+                  className="px-2 py-0.5 text-[10px] font-medium text-purple-700 bg-purple-50 hover:bg-purple-100 disabled:opacity-50 border border-purple-200 rounded flex items-center gap-1 transition-all cursor-pointer"
+                  title="请求中转站的 /v1/models 接口获取该 Key 下所有可用模型"
+                >
+                  {fetchingModels ? (
+                    <Loader2 className="w-3 h-3 animate-spin text-purple-600" />
+                  ) : (
+                    <RefreshCw className="w-3 h-3 text-purple-600" />
+                  )}
+                  <span>{fetchingModels ? '正在查询模型...' : '查询可用模型'}</span>
+                </button>
               </div>
+
               <input
                 type="text"
                 value={aiModel}
@@ -1483,38 +1599,108 @@ export const SettingsPage: React.FC = () => {
                   setAiTesting(false);
                   setAiTestResult(null);
                 }}
-                placeholder="如: deepseek-chat, gpt-4o, qwen-vl-max"
+                placeholder="如: gpt-5.2, gpt-4o, deepseek-chat"
                 className="p-2 border border-slate-200 rounded-lg text-xs bg-slate-50 font-mono focus:bg-white focus:border-purple-500 transition-colors"
               />
-              <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-                {[
-                  { name: 'deepseek-chat', label: 'DeepSeek-V3' },
-                  { name: 'deepseek-reasoner', label: 'DeepSeek-R1' },
-                  { name: 'gpt-4o', label: 'GPT-4o (视觉)' },
-                  { name: 'gpt-4o-mini', label: 'GPT-4o Mini (视觉)' },
-                  { name: 'qwen-vl-max', label: '通义千问 VL (视觉)' },
-                  { name: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet' },
-                  { name: 'qwen2.5', label: 'Ollama 本地' },
-                ].map((item) => (
-                  <button
-                    key={item.name}
-                    type="button"
-                    onClick={() => {
-                      setAiModel(item.name);
-                      aiProbeIdRef.current++;
-                      setAiTesting(false);
-                      setAiTestResult(null);
-                    }}
-                    className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-all ${
-                      aiModel === item.name
-                        ? 'bg-purple-100 text-purple-800 border-purple-300 font-semibold'
-                        : 'bg-slate-100/80 text-slate-600 border-slate-200 hover:bg-slate-200/80'
-                    }`}
-                  >
-                    {item.label}
-                  </button>
-                ))}
+
+              {/* 查询报错提示 */}
+              {modelsFetchError && (
+                <div className="p-1.5 rounded text-[10px] bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3 text-amber-600 shrink-0" />
+                  <span>{modelsFetchError}</span>
+                </div>
+              )}
+
+              {/* 查询成功获取的中转站模型候选列表 */}
+              {availableModels.length > 0 && (
+                <div className="flex flex-col gap-1 bg-purple-50/50 p-2 rounded-lg border border-purple-200">
+                  <div className="flex items-center justify-between text-[10px] text-purple-900 font-medium">
+                    <span>中转站开通的模型 (共 {availableModels.length} 个，点击一键选用)：</span>
+                    <button
+                      type="button"
+                      onClick={() => setAvailableModels([])}
+                      className="text-slate-400 hover:text-slate-600 text-[10px]"
+                    >
+                      收起
+                    </button>
+                  </div>
+                  <div className="max-h-36 overflow-y-auto flex items-center gap-1.5 flex-wrap pt-0.5">
+                    {availableModels.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => {
+                          setAiModel(item.id);
+                          aiProbeIdRef.current++;
+                          setAiTesting(false);
+                          setAiTestResult(null);
+                        }}
+                        className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-all cursor-pointer ${
+                          aiModel === item.id
+                            ? 'bg-purple-600 text-white border-purple-600 font-semibold shadow-xs'
+                            : 'bg-white text-slate-700 border-purple-200 hover:bg-purple-100 hover:text-purple-900'
+                        }`}
+                        title={item.name && item.name !== item.id ? `${item.name} (${item.id})` : item.id}
+                      >
+                        {item.name || item.id}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 常用预设模型快捷按钮 */}
+              {availableModels.length === 0 && (
+                <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                  {[
+                    { name: 'deepseek-chat', label: 'DeepSeek-V3' },
+                    { name: 'deepseek-reasoner', label: 'DeepSeek-R1' },
+                    { name: 'gpt-4o', label: 'GPT-4o (视觉)' },
+                    { name: 'gpt-4o-mini', label: 'GPT-4o Mini (视觉)' },
+                    { name: 'qwen-vl-max', label: '通义千问 VL (视觉)' },
+                    { name: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet' },
+                    { name: 'qwen2.5', label: 'Ollama 本地' },
+                  ].map((item) => (
+                    <button
+                      key={item.name}
+                      type="button"
+                      onClick={() => {
+                        setAiModel(item.name);
+                        aiProbeIdRef.current++;
+                        setAiTesting(false);
+                        setAiTestResult(null);
+                      }}
+                      className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-all cursor-pointer ${
+                        aiModel === item.name
+                          ? 'bg-purple-100 text-purple-800 border-purple-300 font-semibold'
+                          : 'bg-slate-100/80 text-slate-600 border-slate-200 hover:bg-slate-200/80'
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 3.1 单次请求超时时间设置 */}
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center justify-between text-[11px] font-medium text-slate-600">
+                <span>单次请求超时时间 (秒)</span>
+                <span className="text-[10px] text-slate-400 font-mono">当前: {aiTimeoutSeconds}s (建议 60~90s)</span>
               </div>
+              <input
+                type="number"
+                min="10"
+                max="300"
+                value={aiTimeoutSeconds}
+                onChange={(event) => setAiTimeoutSeconds(Number(event.target.value) || 60)}
+                placeholder="默认 60 秒"
+                className="p-2 border border-slate-200 rounded-lg text-xs bg-slate-50 font-mono focus:bg-white focus:border-purple-500 transition-colors w-full"
+              />
+              <span className="text-[10px] text-slate-400 leading-tight">
+                若使用 27B/32B/72B 较多参数模型或硅基流动公有队列排队较慢时，建议设为 60~90 秒以避免请求被过早中断。
+              </span>
             </div>
 
             {/* 4. 测试大模型连接按钮 */}

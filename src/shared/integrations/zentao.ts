@@ -46,6 +46,7 @@ export interface ZentaoCreateResult {
   url: string;
   attachmentUploaded?: boolean;
   attachmentError?: string;
+  attachmentEmbedded?: boolean;
   recordingUploaded?: boolean;
   recordingError?: string;
 }
@@ -332,31 +333,55 @@ export class ZentaoClient {
         if ((err as Error).name === 'AbortError') throw err;
       }
 
-      // 3. 备用端点 B：若为基于浏览器会话的 cookie 模式，尝试调用网页富文本通用异步上传接口
-      if (this.config.authMode === 'cookie') {
-        try {
-          const form3 = new FormData();
-          form3.append('imgFile', blob, fileName);
-          form3.append('localUrl', fileName);
+      // 3. 备用端点 B：调用禅道 Web 端原生附件与富文本上传接口（穿透浏览器 Cookie 登录态）
+      try {
+        const webEndpoints = [
+          `${norm.baseUrl}/action-comment-bug-${bugId}.html`,
+          `${norm.baseUrl}/index.php?m=action&f=comment&objectType=bug&objectID=${bugId}`,
+          `${norm.baseUrl}/file-ajaxUpload-bug-${bugId}.html`,
+          `${norm.baseUrl}/index.php?m=file&f=ajaxUpload&objectType=bug&objectID=${bugId}`,
+          `${norm.baseUrl}/file-upload-bug-${bugId}.html`,
+          `${norm.baseUrl}/index.php?m=file&f=upload&objectType=bug&objectID=${bugId}`,
+          `${norm.baseUrl}/file-ajaxUpload.html?dir=image`,
+        ];
 
-          const response3 = await this.fetcher(`${norm.baseUrl}/file-ajaxUpload.html?dir=image`, {
-            method: 'POST',
-            credentials: 'include',
-            headers: this.buildHeaders(),
-            body: form3,
-            signal: controller.signal,
-          });
+        for (const webUrl of webEndpoints) {
+          try {
+            const formWeb = new FormData();
+            formWeb.append('comment', `【QA Copilot 自动同步现场附件：${fileName}】`);
+            formWeb.append('file', blob, fileName);
+            formWeb.append('files[]', blob, fileName);
+            formWeb.append('files', blob, fileName);
+            formWeb.append('labels[]', fileName);
+            formWeb.append('upFile', blob, fileName);
+            formWeb.append('imgFile', blob, fileName);
+            formWeb.append('localUrl', fileName);
+            formWeb.append('objectType', 'bug');
+            formWeb.append('objectID', String(bugId));
 
-          const contentType3 = response3.headers?.get ? (response3.headers.get('content-type') || '') : '';
-          if (!contentType3.includes('text/html')) {
-            const resJson3 = (await response3.json().catch(() => ({}))) as any;
-            if (response3.ok && (resJson3?.error === 0 || resJson3?.status === 'success' || resJson3?.url)) {
+            const responseWeb = await this.fetcher(webUrl, {
+              method: 'POST',
+              credentials: 'include',
+              body: formWeb,
+              signal: controller.signal,
+            });
+
+            const contentTypeWeb = responseWeb.headers?.get ? (responseWeb.headers.get('content-type') || '') : '';
+            if (!contentTypeWeb.includes('text/html')) {
+              const resJsonWeb = (await responseWeb.json().catch(() => ({}))) as any;
+              if (responseWeb.ok && (resJsonWeb?.error === 0 || resJsonWeb?.status === 'success' || resJsonWeb?.url || resJsonWeb?.id)) {
+                return;
+              }
+            } else if (webUrl.includes('action-comment') && (responseWeb.ok || responseWeb.redirected || responseWeb.status === 302)) {
+              // action-comment 提交成功后通常会重定向或返回刷新脚本
               return;
             }
+          } catch {
+            // 继续尝试下一个 Web 端点
           }
-        } catch (err) {
-          if ((err as Error).name === 'AbortError') throw err;
         }
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') throw err;
       }
 
       // 4. 全部候选端点均未成功，对常见权限拒绝做人性化精准转译
@@ -374,6 +399,74 @@ export class ZentaoClient {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /**
+   * 将现场截图上传至禅道 Web 富文本编辑器的图片存储目录（绕开 API 权限限制）
+   * 成功后返回禅道服务器上的真实图片 URL（如 http://zentao.xxx/data/upload/...）
+   * 该 URL 插入正文后不会被禅道 HTMLPurifier 安全机制剥离
+   */
+  async uploadWebEditorImage(dataUrl: string): Promise<string | null> {
+    try {
+      const blob = this.screenshotBlob(dataUrl);
+      const norm = this.getNormalized();
+      const fileName = `qa-editor-img-${Date.now()}.png`;
+
+      const candidateUrls = [
+        `${norm.baseUrl}/file-ajaxUpload.html?dir=image`,
+        `${norm.baseUrl}/index.php?m=file&f=ajaxUpload&dir=image`,
+        `${norm.baseUrl}/file-upload.html?dir=image`,
+        `${norm.baseUrl}/index.php?m=file&f=upload&dir=image`,
+      ];
+
+      for (const targetUrl of candidateUrls) {
+        try {
+          const form = new FormData();
+          form.append('imgFile', blob, fileName);
+          form.append('file', blob, fileName);
+          form.append('localUrl', fileName);
+
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 8000);
+
+          const response = await this.fetcher(targetUrl, {
+            method: 'POST',
+            credentials: 'include',
+            body: form,
+            signal: controller.signal,
+          });
+          clearTimeout(timer);
+
+          const rawText = await response.text().catch(() => '');
+          let res: any = {};
+          try {
+            res = JSON.parse(rawText);
+          } catch {
+            const match = rawText.match(/\{[\s\S]*"url"[\s\S]*\}/);
+            if (match) {
+              try { res = JSON.parse(match[0]); } catch {}
+            }
+          }
+
+          if (res && typeof res === 'object') {
+            const rawUrl = res.url || res.data?.url || (res.error === 0 && typeof res.message === 'string' && res.message);
+            if (rawUrl && typeof rawUrl === 'string') {
+              if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
+                return rawUrl;
+              }
+              const cleanBase = norm.baseUrl.replace(/\/+$/, '');
+              const cleanPath = rawUrl.startsWith('/') ? rawUrl : `/${rawUrl}`;
+              return `${cleanBase}${cleanPath}`;
+            }
+          }
+        } catch {
+          // 尝试下一个候选端点
+        }
+      }
+    } catch {
+      // 容错降级
+    }
+    return null;
   }
 
   async uploadScreenshot(bugId: number, dataUrl: string): Promise<void> {
@@ -1322,6 +1415,8 @@ export class ZentaoClient {
       aiAnalysis?: string;
       recordingBlob?: Blob;
       recordingFileName?: string;
+      recordingDataUrl?: string;
+      currentUser?: string;
     },
     snapshot: BugSnapshot
   ): Promise<ZentaoCreateResult> {
@@ -1339,29 +1434,16 @@ export class ZentaoClient {
       ? bug.pri
       : (severityMap[bug.severity] || 3);
 
-    const stepsParts = [
-      '[步骤]',
-      ...bug.reproductionSteps.map((step, index) => `${index + 1}. ${step.replace(/^\d+\.\s*/, '')}`),
-      '',
-      '[结果]',
-      bug.actualResult,
-      '',
-      '[期望]',
-      bug.expectedResult,
-    ];
-
-    if (bug.aiAnalysis && bug.aiAnalysis.trim()) {
-      stepsParts.push('', '[疑似根因分析与排查建议]', bug.aiAnalysis.trim());
+    let uploadedWebImageUrl: string | null = null;
+    if (snapshot.screenshotUrl && snapshot.screenshotUrl.startsWith('data:image/')) {
+      try {
+        uploadedWebImageUrl = await this.uploadWebEditorImage(snapshot.screenshotUrl);
+      } catch {
+        uploadedWebImageUrl = null;
+      }
     }
 
-    stepsParts.push(
-      '',
-      '[环境]',
-      `${snapshot.environment || '未知'} | ${snapshot.browserInfo.browserName} ${snapshot.browserInfo.browserVersion} | ${snapshot.browserInfo.os}`,
-      snapshot.url,
-    );
-
-    const steps = stepsParts.join('\n');
+    const steps = ZentaoClient.buildZentaoStepsHtml(bug, snapshot, uploadedWebImageUrl, bug.recordingDataUrl);
     this.validateConfig();
     const norm = this.getNormalized();
     const primaryAdapter = this.getAdapter();
@@ -1493,6 +1575,7 @@ export class ZentaoClient {
       const created: ZentaoCreateResult = {
         id: parsed.id,
         url: `${norm.baseUrl}/bug-view-${parsed.id}.html`,
+        attachmentEmbedded: Boolean(uploadedWebImageUrl),
       };
 
       if (snapshot.screenshotUrl) {
@@ -1530,5 +1613,189 @@ export class ZentaoClient {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /**
+   * 构造现代卡片化、研发友好的禅道步骤富文本 HTML
+   */
+  static buildZentaoStepsHtml(
+    bug: Pick<Bug, 'title' | 'severity' | 'reproductionSteps' | 'expectedResult' | 'actualResult'> & {
+      assignedTo?: string;
+      pri?: number;
+      severityLevel?: number;
+      aiAnalysis?: string;
+      currentUser?: string;
+      recordingDataUrl?: string;
+      recordingFileName?: string;
+    },
+    snapshot: BugSnapshot,
+    uploadedWebImageUrl?: string | null,
+    recordingDataUrl?: string | null
+  ): string {
+    const resolvedUser = bug.currentUser || snapshot.currentUser;
+    const browserStr = snapshot.browserInfo
+      ? `${snapshot.browserInfo.browserName} ${snapshot.browserInfo.browserVersion} | ${snapshot.browserInfo.os}`
+      : 'Chrome';
+
+    // 辅助：针对长 JSON 数据进行适度美化与格式化，避免长单行破坏禅道视觉
+    const formatPayloadBlock = (rawStr: string, maxLen = 50_000) => {
+      const trimmed = rawStr.trim();
+      if (!trimmed) return '';
+      let display = trimmed;
+      try {
+        const parsed = JSON.parse(trimmed);
+        display = JSON.stringify(parsed, null, 2);
+      } catch {
+        // 非标准 JSON 保持原样
+      }
+      if (display.length > maxLen) {
+        display = `${display.slice(0, maxLen)}\n... (数据过长，已保留前 ${maxLen.toLocaleString()} 字符)`;
+      }
+      return `<pre style="margin: 2px 0 0; padding: 6px 8px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11px; line-height: 1.45; color: #334155; max-height: 380px; overflow: auto; white-space: pre-wrap; word-break: break-all;">${display}</pre>`;
+    };
+
+    const isStaticResource = (mimeType = '', pathname = '', url = '') =>
+      /^(image|font)\//i.test(mimeType) ||
+      /^text\/css/i.test(mimeType) ||
+      /\.(?:css|png|jpe?g|gif|svg|ico|woff2?|ttf|map)(?:\?|$)/i.test(pathname || url);
+
+    const allRequests = snapshot.networkRequests || [];
+    const errorRequests = allRequests.filter(
+      (r) => r.isError || (r.status !== undefined && (r.status >= 400 || r.status === 0))
+    );
+    const businessRequests = allRequests.filter(
+      (r) => !isStaticResource(r.mimeType, r.pathname, r.url)
+    );
+
+    const stepsParts: string[] = [];
+
+    // 1. 重现步骤 (紧凑列表)
+    stepsParts.push(
+      '<div style="margin-bottom: 8px;">',
+      '  <div style="font-size: 13px; font-weight: 700; color: #0f172a; margin-bottom: 4px; border-left: 3px solid #2563eb; padding-left: 6px; line-height: 1.2;">[步骤] 重现流程</div>',
+      '  <ol style="margin: 0; padding-left: 18px; line-height: 1.5; color: #334155; font-size: 12.5px;">',
+      ...bug.reproductionSteps.map((step) => `    <li>${step.replace(/^\d+\.\s*/, '')}</li>`),
+      '  </ol>',
+      '</div>'
+    );
+
+    // 2. 实际结果与期望对比卡片 (紧凑微边距)
+    stepsParts.push(
+      '<div style="margin-bottom: 8px;">',
+      '  <div style="background: #fef2f2; border: 1px solid #fecaca; border-left: 3px solid #ef4444; border-radius: 4px; padding: 6px 10px; margin-bottom: 4px;">',
+      '    <div style="font-weight: 700; color: #991b1b; font-size: 12px; margin-bottom: 2px; line-height: 1.2;">❌ [结果] 现场异常现象</div>',
+      `    <div style="color: #7f1d1d; font-size: 12.5px; line-height: 1.45;">${bug.actualResult}</div>`,
+      '  </div>',
+      '  <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-left: 3px solid #16a34a; border-radius: 4px; padding: 6px 10px;">',
+      '    <div style="font-weight: 700; color: #166534; font-size: 12px; margin-bottom: 2px; line-height: 1.2;">✅ [期望] 预期正常行为</div>',
+      `    <div style="color: #14532d; font-size: 12.5px; line-height: 1.45;">${bug.expectedResult}</div>`,
+      '  </div>',
+      '</div>'
+    );
+
+    // 3. AI 根因分析与排查建议 (紧凑卡片)
+    if (bug.aiAnalysis && bug.aiAnalysis.trim()) {
+      stepsParts.push(
+        '<div style="background: #f5f3ff; border: 1px solid #ddd6fe; border-left: 3px solid #7c3aed; border-radius: 4px; padding: 6px 10px; margin-bottom: 8px;">',
+        '  <div style="font-weight: 700; color: #5b21b6; font-size: 12px; margin-bottom: 2px; line-height: 1.2;">💡 [疑似根因分析与排查建议]</div>',
+        `  <div style="color: #4c1d95; font-size: 12px; line-height: 1.45; white-space: pre-wrap;">${bug.aiAnalysis.trim()}</div>`,
+        '</div>'
+      );
+    }
+
+    // 4. 环境与运行信息卡片 (紧凑单行/双行呈现)
+    stepsParts.push(
+      '<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-left: 3px solid #64748b; border-radius: 4px; padding: 6px 10px; margin-bottom: 8px;">',
+      '  <div style="font-weight: 700; color: #334155; font-size: 12px; margin-bottom: 3px; line-height: 1.2;">🖥️ [环境与页面信息]</div>',
+      '  <div style="color: #475569; font-size: 11.5px; line-height: 1.5;">',
+      `    <div>• 页面地址: ${snapshot.url || '未知'}</div>`,
+      ...(resolvedUser ? [`    <div>• 当前登录用户: ${resolvedUser}</div>`] : []),
+      `    <div>• 运行环境: <span style="font-family: monospace; background: #e2e8f0; padding: 0 4px; border-radius: 2px;">${snapshot.environment || 'TEST'}</span> | ${browserStr}</div>`,
+      '  </div>',
+      '</div>'
+    );
+
+    // 5. 接口证据 (卡片化，紧凑行距)
+    const formatRequestDetails = (req: any, idx: number) => {
+      const isOk = req.status >= 200 && req.status < 300;
+      const statusTextPart = req.statusText ? ` ${req.statusText}` : '';
+      const statusDesc = req.status ? `${req.status}${statusTextPart}` : '网络异常/中断';
+
+      const card = [
+        '<div style="margin-bottom: 4px; border: 1px solid #e2e8f0; border-radius: 4px; padding: 6px 8px; background: #ffffff;">',
+        `  <div style="font-size: 11.5px; font-weight: 600; color: #1e293b; margin-bottom: 2px; word-break: break-all;">${idx + 1}. [${req.method || 'GET'}] ${req.pathname || req.url}</div>`,
+        `  <div style="font-size: 11px; color: ${isOk ? '#15803d' : '#b91c1c'}; margin-bottom: 2px;">• 状态: ${statusDesc} (耗时: ${req.duration || 0}ms)</div>`,
+        `  <div style="font-size: 10.5px; color: #64748b; word-break: break-all; margin-bottom: 2px;">• URL: ${req.url}</div>`,
+      ];
+      if (req.requestBody && req.requestBody.trim()) {
+        card.push(`  <div style="font-size: 11px; color: #475569; font-weight: 500;">• 请求参数:</div>${formatPayloadBlock(req.requestBody)}`);
+      }
+      if (req.responseBody && req.responseBody.trim()) {
+        card.push(`  <div style="font-size: 11px; color: #475569; font-weight: 500; margin-top: 3px;">• 响应数据:</div>${formatPayloadBlock(req.responseBody)}`);
+      }
+      card.push('</div>');
+      return card;
+    };
+
+    if (errorRequests.length > 0) {
+      stepsParts.push(
+        '<div style="margin-bottom: 8px;">',
+        '  <div style="font-size: 12px; font-weight: 700; color: #b91c1c; margin-bottom: 4px; border-left: 3px solid #ef4444; padding-left: 6px; line-height: 1.2;">⚠️ [涉及的关键异常接口]</div>'
+      );
+      errorRequests.slice(0, 5).forEach((req, idx) => {
+        stepsParts.push(...formatRequestDetails(req, idx));
+      });
+      stepsParts.push('</div>');
+    } else if (businessRequests.length > 0) {
+      const recentReqs = businessRequests.slice(-4);
+      stepsParts.push(
+        '<div style="margin-bottom: 8px;">',
+        '  <div style="font-size: 12px; font-weight: 700; color: #1e293b; margin-bottom: 4px; border-left: 3px solid #64748b; padding-left: 6px; line-height: 1.2;">🔗 [相关业务接口交互记录 (HTTP 200 正常返回)]</div>'
+      );
+      recentReqs.forEach((req, idx) => {
+        stepsParts.push(...formatRequestDetails(req, idx));
+      });
+      stepsParts.push('</div>');
+    }
+
+    // 控制台错误摘要 (紧凑)
+    if (snapshot.consoleErrors && snapshot.consoleErrors.length > 0) {
+      stepsParts.push(
+        '<div style="margin-bottom: 8px; background: #fffbeb; border: 1px solid #fef3c7; border-left: 3px solid #d97706; border-radius: 4px; padding: 6px 10px;">',
+        '  <div style="font-weight: 700; color: #92400e; font-size: 12px; margin-bottom: 3px; line-height: 1.2;">📋 [控制台错误]</div>'
+      );
+      snapshot.consoleErrors.slice(0, 3).forEach((err, idx) => {
+        const stackSnippet = (err.payload as { stack?: string })?.stack
+          ? ` (${(err.payload as { stack?: string }).stack?.split('\n')[0]?.trim()})`
+          : '';
+        stepsParts.push(`  <div style="font-size: 11px; color: #78350f; font-family: monospace; margin-bottom: 1px;">${idx + 1}. ${err.title || err.description}${stackSnippet}</div>`);
+      });
+      stepsParts.push('</div>');
+    }
+
+    const finalImageUrl = uploadedWebImageUrl || snapshot.screenshotUrl;
+    if (finalImageUrl) {
+      stepsParts.push(
+        '<div style="margin-top: 8px;">',
+        '  <div style="font-size: 13px; font-weight: 700; color: #0f172a; margin-bottom: 4px; border-left: 3px solid #2563eb; padding-left: 6px; line-height: 1.2;">📷 [问题现场截图]</div>',
+        '  <div style="text-align: center; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 6px; margin-top: 4px;">',
+        `    <img src="${finalImageUrl}" alt="问题现场截图" style="max-width: 100%; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border: 1px solid #cbd5e1;" />`,
+        '  </div>',
+        '</div>'
+      );
+    }
+
+    const hasRecording = Boolean(recordingDataUrl || bug.recordingDataUrl || bug.recordingFileName);
+    if (hasRecording) {
+      const recFileName = bug.recordingFileName || 'qa-recording.webm';
+      stepsParts.push(
+        '<div style="margin-top: 8px; background: #faf5ff; border: 1px solid #e9d5ff; border-left: 3px solid #9333ea; border-radius: 4px; padding: 6px 10px;">',
+        '  <div style="font-size: 12.5px; font-weight: 700; color: #6b21a8; margin-bottom: 2px; line-height: 1.2;">🎥 [问题现场录屏]</div>',
+        `  <div style="font-size: 11.5px; color: #581c87; line-height: 1.45;">现场动态操作录屏已由 QA Copilot 同步上传至本 Bug 附件（<strong>${recFileName}</strong>），研发人员可直接在页面右上角「附件」中点击在线播放或下载！</div>`,
+        '</div>'
+      );
+    }
+
+    return stepsParts.join('\n');
   }
 }

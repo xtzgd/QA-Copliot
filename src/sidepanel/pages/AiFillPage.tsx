@@ -13,7 +13,6 @@ import {
   Clock,
   Edit3,
   FileSpreadsheet,
-  FolderCheck,
   History,
   Play,
   RotateCcw,
@@ -42,8 +41,15 @@ import { aiProviderService } from '../../ai';
 import { formFillRunRepo } from '../../db/repositories/formFillRunRepository';
 import { formFillTemplateRepo } from '../../db/repositories/formFillTemplateRepository';
 import { formFillHistoryRepo } from '../../db/repositories/formFillHistoryRepository';
-import { matchTemplateField } from '../../shared/utils/formTemplateMatching';
+import { executeTemplateQuickFill } from '../../shared/utils/formQuickFill';
 import { useAppStore } from '../store/useAppStore';
+
+const PRESET_INSTRUCTIONS = [
+  { label: '🎯 默认测试数据', text: '合理生成标准测试数据，必填项优先，保留已有数据' },
+  { label: '🎲 随机有效值', text: '随机生成合规测试数据，手机号/邮箱/名称需格式合法' },
+  { label: '📝 仅填必填项', text: '只填写标记为必填的空白字段，非必填项跳过' },
+  { label: '💼 企业测试数据', text: '公司：星河科技，联系人：张三，行业：软件服务，规模：100-500人' },
+];
 
 interface EditableAssignment extends FormFillAssignment {
   checked: boolean;
@@ -54,7 +60,7 @@ interface EditableAssignment extends FormFillAssignment {
 }
 
 export const AiFillPage: React.FC = () => {
-  const { setToastMessage } = useAppStore();
+  const { setToastMessage, formFillSubTab, setFormFillSubTab } = useAppStore();
 
   const [snapshot, setSnapshot] = useState<FormSnapshot | null>(null);
   const [selectedFormId, setSelectedFormId] = useState<string>('all');
@@ -538,6 +544,7 @@ export const AiFillPage: React.FC = () => {
     }
 
     setAssignments(editableList);
+    setFormFillSubTab('ai');
     setToastMessage(`已将历史 [${history.title}] 的 ${editableList.length} 项字段载入方案预览，您可以微调后执行`);
   };
 
@@ -623,7 +630,8 @@ export const AiFillPage: React.FC = () => {
     }
 
     setAssignments(newAssignments);
-    setToastMessage(`已套用模板 [${tpl.name}]：动态匹配成功 ${matchedCount} 项字段，请在下方预览确认`);
+    setFormFillSubTab('ai');
+    setToastMessage(`已套用模板 [${tpl.name}]：动态匹配成功 ${matchedCount} 项字段，已载入方案预览`);
   };
 
   // 7. 保存当前勾选项为填写模板 (IMP-10)
@@ -723,112 +731,28 @@ export const AiFillPage: React.FC = () => {
     setToastMessage(`🎉 成功识别并提取 ${fieldsToExtract.length} 项已录入字段，保存为模板 [${tpl.name}]！后续可随时一键直接填充`);
   };
 
-  // 9. 模板一键填充 (无需手动生成方案或逐项确认，直接极速写入当前页面并回读校验)
+  // 9. 模板一键填充 (复用统一的 executeTemplateQuickFill 快速填充引擎)
   const handleQuickFillTemplate = async (template: FormFillTemplate) => {
     setIsQuickFillingTemplateId(template.id);
+    setIsExecuting(true);
     try {
-      // 1. 优先实时扫描当前网页（确保拿到真实 DOM 最新的 fieldId 及选项数据）
-      setIsScanning(true);
-      const scanRes = await sendToBackground<ScanFormSnapshotResponse>({
-        type: 'SCAN_FORM_SNAPSHOT',
-        payload: undefined,
-      });
-      setIsScanning(false);
-
-      const activeSnap = scanRes?.snapshot;
-      if (!activeSnap) {
-        setToastMessage(scanRes?.error || '未找到活动页面，请刷新被测网页后重试');
-        return;
-      }
-      setSnapshot(activeSnap);
-
-      const targetFields = activeSnap.fields;
-      if (targetFields.length === 0) {
-        setToastMessage('当前页面未检测到可填充的表单字段');
-        return;
-      }
-
-      const quickAssignments: FormFillAssignment[] = [];
-      const matchedFieldIds = new Set<string>();
-
-      for (const rule of template.rules) {
-        const matched = matchTemplateField(rule, targetFields, matchedFieldIds);
-
-        if (matched) {
-          matchedFieldIds.add(matched.fieldId);
-          let optionIds: string[] | undefined;
-          if (matched.options && matched.options.length > 0) {
-            const valStr = String(rule.value).trim();
-            const opt = matched.options.find(
-              (o) => o.value === valStr || o.label?.trim() === valStr || o.optionId === valStr
-            );
-            if (opt) {
-              optionIds = [opt.optionId];
-            }
-          }
-
-          quickAssignments.push({
-            fieldId: matched.fieldId,
-            action: rule.action || (matched.kind === 'select' ? 'select' : matched.kind === 'checkbox' || matched.kind === 'radio' ? 'check' : 'fill'),
-            value: rule.value,
-            optionIds,
-            source: 'instruction',
-            reason: `来自模板 [${template.name}]`,
-            expectedBeforeValue: matched.currentValue,
-            wasEmpty: matched.isEmpty,
-          });
-        }
-      }
-
-      if (quickAssignments.length === 0) {
-        setToastMessage(`当前页面未找到与模板 [${template.name}] 匹配的可用字段`);
-        return;
-      }
-
-      const currentRunId = `run_tpl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-      setExecutingRunId(currentRunId);
-      setIsExecuting(true);
-
-      const res = await sendToBackground<ExecuteFormFillResponse>({
-        type: 'EXECUTE_FORM_FILL',
-        payload: {
-          runId: currentRunId,
-          snapshotId: activeSnap.snapshotId,
-          targetTabId: activeSnap.tabId,
-          mode: 'allow_overwrite',
-          assignments: quickAssignments,
-        },
-      });
-
+      const result = await executeTemplateQuickFill(template);
       setIsExecuting(false);
-      setExecutingRunId(null);
-
-      if (!res || res.error || !res.runRecord) {
-        setToastMessage(res?.error || '模板一键填充执行失败');
+      setIsQuickFillingTemplateId(null);
+      if (!result.success) {
+        setToastMessage(result.message);
+        if (result.snapshot) setSnapshot(result.snapshot);
         return;
       }
-
-      setLastRunRecord(res.runRecord);
-      await formFillRunRepo.save(res.runRecord).catch(() => {});
-
-      const successCount = res.runRecord.steps.filter((s) => s.status === 'success').length;
-      setToastMessage(`⚡ 模板 [${template.name}] 填充结束，已完成 ${successCount}/${quickAssignments.length} 项字段写入并校验通过`);
-
-      // 重新静默扫描以同步页面最新状态
-      const refreshed = await sendToBackground<ScanFormSnapshotResponse>({
-        type: 'SCAN_FORM_SNAPSHOT',
-        payload: undefined,
-      });
-      if (refreshed?.snapshot) {
-        setSnapshot(refreshed.snapshot);
-      }
+      if (result.snapshot) setSnapshot(result.snapshot);
+      if (result.runRecord) setLastRunRecord(result.runRecord);
+      setToastMessage(result.message);
+      // 刷新历史填表记录
+      formFillHistoryRepo.listAll().then(setHistories).catch(() => {});
     } catch (err) {
       setIsExecuting(false);
-      setExecutingRunId(null);
-      setToastMessage((err as Error).message || '模板一键填充异常');
-    } finally {
-      setIsScanning(false);
       setIsQuickFillingTemplateId(null);
+      setToastMessage((err as Error).message || '模板一键填充异常');
     }
   };
 
@@ -909,561 +833,579 @@ export const AiFillPage: React.FC = () => {
         )}
       </div>
 
-      {/* 填写模板库 (可一键秒填) */}
-      <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs flex flex-col gap-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5 font-bold text-slate-800">
-            <Bookmark className="w-4 h-4 text-indigo-600" />
-            <span>填写模板库</span>
-            {templates.length > 0 && (
-              <span className="text-[10px] bg-indigo-50 text-indigo-700 px-1.5 py-0.2 rounded-full font-medium">
-                {templates.length}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={handleExtractFormAsTemplate}
-              disabled={isScanning || isExecuting}
-              className="text-[10px] text-indigo-600 hover:text-indigo-700 font-medium flex items-center gap-0.5 transition-colors px-1.5 py-0.5 rounded hover:bg-indigo-50"
-              title="从当前网页提取已录入数据保存为新模板"
-            >
-              <BookmarkPlus className="w-3 h-3" />
-              <span>提取录入为模板</span>
-            </button>
-            {templates.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setIsTemplatesExpanded(!isTemplatesExpanded)}
-                className="text-slate-400 hover:text-slate-600 transition-colors p-1"
-                title={isTemplatesExpanded ? '折叠列表' : '展开列表'}
-              >
-                {isTemplatesExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-              </button>
-            )}
-          </div>
-        </div>
+      {/* 双 Tab 分流切换器 */}
+      <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200 shadow-2xs">
+        <button
+          type="button"
+          onClick={() => setFormFillSubTab('ai')}
+          className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+            formFillSubTab === 'ai'
+              ? 'bg-white text-blue-700 shadow-xs'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+          <span>✨ AI 智能填表</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setFormFillSubTab('templates')}
+          className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+            formFillSubTab === 'templates'
+              ? 'bg-white text-indigo-700 shadow-xs'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Bookmark className="w-3.5 h-3.5 text-indigo-600" />
+          <span>📚 模板与历史库</span>
+          {(templates.length > 0 || histories.length > 0) && (
+            <span className="text-[10px] bg-indigo-50 text-indigo-700 px-1.5 py-0.2 rounded-full font-medium">
+              {templates.length + histories.length}
+            </span>
+          )}
+        </button>
+      </div>
 
-        {templates.length === 0 ? (
-          <p className="text-[11px] text-slate-400 py-1">
-            💡 在网页表单填写数据后点击「存为模板」，保存后下次打开同类表单即可一键秒填
-          </p>
-        ) : isTemplatesExpanded ? (
-          <div className="flex flex-col gap-2 max-h-56 overflow-y-auto pr-1">
-            {templates.map((tpl) => {
-              const isCurrentlyFilling = isQuickFillingTemplateId === tpl.id;
-              const dateStr = tpl.updatedAt
-                ? new Date(tpl.updatedAt).toLocaleDateString('zh-CN', {
+      {/* Tab 1: AI 智能填表 */}
+      {formFillSubTab === 'ai' && (
+        <>
+          {/* 填写要求与策略卡片 */}
+          <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs flex flex-col gap-2.5">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                <Edit3 className="w-3.5 h-3.5 text-slate-600" />
+                <span>填写要求与模式</span>
+              </span>
+              <span className="text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded font-medium flex items-center gap-1">
+                <Sparkles className="w-2.5 h-2.5" />
+                {aiProviderService.activeProvider.label}
+              </span>
+            </div>
+
+            {/* 快捷预设提示词胶囊 */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[10px] text-slate-400">快捷预设:</span>
+              {PRESET_INSTRUCTIONS.map((p) => (
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={() => setInstruction(p.text)}
+                  className="px-2 py-0.5 bg-slate-50 hover:bg-blue-50 hover:text-blue-700 text-slate-600 border border-slate-200 hover:border-blue-200 rounded-full text-[10px] font-medium transition-colors cursor-pointer"
+                  title={`点击填入: ${p.text}`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+
+            <textarea
+              value={instruction}
+              onChange={(e) => setInstruction(e.target.value)}
+              rows={2}
+              placeholder="例如：联系人张三，公司星河科技，行业软件服务，其他空白字段合理生成"
+              className="w-full p-2 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-blue-500 focus:outline-hidden"
+            />
+
+            <input
+              type="text"
+              value={sourceText}
+              onChange={(e) => setSourceText(e.target.value)}
+              placeholder="可选：补充业务资料（如客户简介或参数文本）"
+              className="w-full p-1.5 border border-slate-200 rounded-lg text-[11px] focus:ring-1 focus:ring-blue-500 focus:outline-hidden"
+            />
+
+            {/* 策略模式选择 */}
+            <div className="flex items-center gap-4 text-[11px] text-slate-600">
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="radio"
+                  name="fillMode"
+                  checked={fillMode === 'empty_only'}
+                  onChange={() => setFillMode('empty_only')}
+                  className="text-blue-600"
+                />
+                <span className="font-medium">仅填空白（默认保留已有值）</span>
+              </label>
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="radio"
+                  name="fillMode"
+                  checked={fillMode === 'allow_overwrite'}
+                  onChange={() => setFillMode('allow_overwrite')}
+                  className="text-blue-600"
+                />
+                <span>允许覆盖</span>
+              </label>
+            </div>
+
+            <button
+              onClick={handleGeneratePlan}
+              disabled={!snapshot || isPlanning || isExecuting}
+              className="w-full py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>{isPlanning ? '方案规划中...' : '生成填写方案'}</span>
+            </button>
+          </div>
+
+          {/* 方案预览与确认 */}
+          {assignments.length > 0 && (
+            <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs flex flex-col gap-2.5">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                <span className="font-bold text-slate-800">
+                  方案预览 ({assignments.filter((a) => a.checked).length}/{assignments.length})
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleSaveAsTemplate}
+                    className="text-[10px] text-emerald-600 hover:text-emerald-700 font-medium flex items-center gap-0.5 transition-colors cursor-pointer"
+                    title="将当前已勾选字段保存为可复用模板"
+                  >
+                    <BookmarkPlus className="w-3 h-3" />
+                    <span>存为模板</span>
+                  </button>
+                  <button
+                    onClick={() => setAssignments((prev) => prev.map((a) => ({ ...a, checked: true })))}
+                    className="text-[10px] text-blue-600 hover:underline cursor-pointer"
+                  >
+                    全选
+                  </button>
+                  <button
+                    onClick={() => setAssignments((prev) => prev.map((a) => ({ ...a, checked: false })))}
+                    className="text-[10px] text-slate-500 hover:underline cursor-pointer"
+                  >
+                    清空
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2 max-h-60 overflow-y-auto pr-1">
+                {assignments.map((item, idx) => (
+                  <div
+                    key={item.fieldId}
+                    className={`p-2 rounded-lg border text-[11px] flex flex-col gap-1 transition-colors ${
+                      item.checked ? 'bg-blue-50/40 border-blue-200' : 'bg-slate-50/60 border-slate-200 opacity-70'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <label className="flex items-center gap-1.5 cursor-pointer font-medium text-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={item.checked}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setAssignments((prev) =>
+                              prev.map((a, i) => (i === idx ? { ...a, checked } : a))
+                            );
+                          }}
+                          className="rounded text-blue-600"
+                        />
+                        <span>{item.fieldLabel}</span>
+                        <span className="text-[9px] text-slate-400 font-normal">({item.fieldKind})</span>
+                      </label>
+                      <span
+                        className={`text-[9px] px-1.5 py-0.2 rounded font-medium ${
+                          item.source === 'instruction'
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : item.source === 'generated'
+                              ? 'bg-purple-100 text-purple-700'
+                              : 'bg-slate-200 text-slate-600'
+                        }`}
+                      >
+                        {item.source === 'instruction' ? '指令匹配' : item.source === 'generated' ? '规则生成' : '保留'}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 pl-5 text-slate-600">
+                      <span className="shrink-0 text-slate-400">当前:</span>
+                      <span className="truncate max-w-[80px]">
+                        {snapshot?.fields.find((field) => field.fieldId === item.fieldId)?.sensitive
+                          ? '••••••'
+                          : String(item.currentValue) || <em className="text-slate-300">空白</em>}
+                      </span>
+                      <span className="text-slate-300">→</span>
+                      <span className="shrink-0 text-slate-400">写入:</span>
+                      <input
+                        type="text"
+                        value={item.value !== undefined ? String(item.value) : ''}
+                        disabled={!item.checked}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const field = currentFields.find((f) => f.fieldId === item.fieldId);
+                          let newOptionIds = item.optionIds;
+                          if (field && (field.kind === 'select' || field.kind === 'radio' || field.kind === 'checkbox') && field.options) {
+                            const trimmed = val.trim();
+                            const matched = field.options.find(
+                              (opt) => opt.value === trimmed || opt.label?.trim() === trimmed || opt.optionId === trimmed
+                            );
+                            newOptionIds = matched ? [matched.optionId] : undefined;
+                          }
+                          setAssignments((prev) =>
+                            prev.map((a, i) => (i === idx ? { ...a, value: val, optionIds: newOptionIds } : a))
+                          );
+                        }}
+                        className="flex-1 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-[11px] font-medium text-slate-800 focus:outline-hidden"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {unresolved.length > 0 && (
+                <div className="p-2 bg-amber-50 rounded-lg text-[10px] text-amber-800 flex flex-col gap-1 border border-amber-200">
+                  <span className="font-semibold flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3 text-amber-600" />
+                    <span>{unresolved.length} 个字段未自动填充：</span>
+                  </span>
+                  <ul className="list-disc pl-4 space-y-0.5">
+                    {unresolved.slice(0, 3).map((u, i) => (
+                      <li key={i}>{u.reason}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* 执行与停止按钮 */}
+              <div className="flex items-center gap-2 pt-1">
+                {isExecuting ? (
+                  <button
+                    onClick={handleCancelFill}
+                    className="flex-1 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <StopCircle className="w-3.5 h-3.5" />
+                    <span>停止填充</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleExecuteFill}
+                    disabled={assignments.filter((a) => a.checked).length === 0}
+                    className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+                  >
+                    <Play className="w-3.5 h-3.5" />
+                    <span>执行填充</span>
+                  </button>
+                )}
+
+                {lastRunRecord && lastRunRecord.status !== 'undone' && (
+                  <button
+                    onClick={handleUndo}
+                    disabled={isExecuting}
+                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium transition-colors flex items-center gap-1 cursor-pointer"
+                    title="撤销本次填充（如已被手动修改则保留新值）"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>撤销</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 历史执行结果简报 */}
+          {lastRunRecord && (
+            <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>填充执行报告</span>
+                </span>
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                    lastRunRecord.status === 'completed'
+                      ? 'bg-emerald-100 text-emerald-700'
+                      : lastRunRecord.status === 'undone'
+                        ? 'bg-slate-200 text-slate-600'
+                        : 'bg-amber-100 text-amber-700'
+                  }`}
+                >
+                  {lastRunRecord.status === 'completed'
+                    ? '全部成功'
+                    : lastRunRecord.status === 'partial'
+                      ? '部分成功'
+                      : lastRunRecord.status === 'undone'
+                        ? '已撤销'
+                        : lastRunRecord.status === 'failed'
+                          ? '执行失败'
+                          : '已停止'}
+                </span>
+              </div>
+
+              <div className="flex flex-col gap-1 text-[11px] text-slate-600">
+                {lastRunRecord.steps.map((step) => (
+                  <div key={step.fieldId} className="flex flex-col gap-1 border-b border-slate-100 last:border-0 py-1.5 select-text">
+                    <span className="truncate max-w-[160px] text-slate-700">{snapshot?.fields.find((field) => field.fieldId === step.fieldId)?.label || assignments.find((item) => item.fieldId === step.fieldId)?.fieldLabel || step.fieldId.split('_').slice(-1)[0]}</span>
+                    {step.status === 'success' ? (
+                      <span className="text-emerald-600 font-medium">✓ 已写入并回读</span>
+                    ) : step.status === 'skipped' ? (
+                      <span className="text-slate-400 whitespace-pre-wrap break-words">跳过：{step.skippedReason || step.error || '未执行'}</span>
+                    ) : (
+                      <span className="text-red-600 whitespace-pre-wrap break-words select-text" title={step.error}>
+                        × {step.error || '失败'}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Tab 2: 模板与历史库 */}
+      {formFillSubTab === 'templates' && (
+        <>
+          {/* 填写模板库 (可一键秒填) */}
+          <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 font-bold text-slate-800">
+                <Bookmark className="w-4 h-4 text-indigo-600" />
+                <span>填写模板库</span>
+                {templates.length > 0 && (
+                  <span className="text-[10px] bg-indigo-50 text-indigo-700 px-1.5 py-0.2 rounded-full font-medium">
+                    {templates.length}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleExtractFormAsTemplate}
+                  disabled={isScanning || isExecuting}
+                  className="text-[10px] text-indigo-600 hover:text-indigo-700 font-medium flex items-center gap-0.5 transition-colors px-1.5 py-0.5 rounded hover:bg-indigo-50 cursor-pointer"
+                  title="从当前网页提取已录入数据保存为新模板"
+                >
+                  <BookmarkPlus className="w-3 h-3" />
+                  <span>提取录入为模板</span>
+                </button>
+                {templates.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setIsTemplatesExpanded(!isTemplatesExpanded)}
+                    className="text-slate-400 hover:text-slate-600 transition-colors p-1 cursor-pointer"
+                    title={isTemplatesExpanded ? '折叠列表' : '展开列表'}
+                  >
+                    {isTemplatesExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {templates.length === 0 ? (
+              <p className="text-[11px] text-slate-400 py-1">
+                💡 在网页表单填写数据后点击「存为模板」，保存后下次打开同类表单即可一键秒填
+              </p>
+            ) : isTemplatesExpanded ? (
+              <div className="flex flex-col gap-2 max-h-64 overflow-y-auto pr-1">
+                {templates.map((tpl) => {
+                  const isCurrentlyFilling = isQuickFillingTemplateId === tpl.id;
+                  const dateStr = tpl.updatedAt
+                    ? new Date(tpl.updatedAt).toLocaleDateString('zh-CN', {
+                        month: 'numeric',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })
+                    : '';
+                  return (
+                    <div
+                      key={tpl.id}
+                      className="p-2.5 rounded-lg border border-slate-200 bg-slate-50/70 hover:border-slate-300 transition-all flex flex-col gap-1.5"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 truncate max-w-[190px]">
+                          <span className="font-semibold text-slate-800 text-[11px] truncate" title={tpl.name}>
+                            {tpl.name}
+                          </span>
+                          <span className="text-[9px] bg-slate-200/80 text-slate-600 px-1.5 py-0.2 rounded shrink-0">
+                            {tpl.rules.length} 项
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleApplyTemplate(tpl.id)}
+                            disabled={isExecuting}
+                            className="px-2 py-0.5 bg-slate-200/70 hover:bg-slate-200 text-slate-700 rounded text-[10px] font-medium transition-colors cursor-pointer"
+                            title="套用并切换至方案预览中微调修改"
+                          >
+                            套用
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleQuickFillTemplate(tpl)}
+                            disabled={isExecuting}
+                            className="px-2.5 py-0.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded text-[10px] font-medium flex items-center gap-0.5 transition-colors shadow-2xs cursor-pointer"
+                            title="一键直接填充当前网页"
+                          >
+                            <Zap className="w-2.5 h-2.5" />
+                            <span>{isCurrentlyFilling ? '填充中...' : '一键填充'}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteTemplate(tpl.id)}
+                            className="text-slate-300 hover:text-red-500 transition-colors p-0.5 ml-0.5 cursor-pointer"
+                            title="删除此模板"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* 字段规则预览标签 */}
+                      <div className="flex items-center gap-1 flex-wrap text-[10px] text-slate-600">
+                        {dateStr && (
+                          <>
+                            <span className="text-slate-400 flex items-center gap-0.5">
+                              <Clock className="w-2.5 h-2.5" />
+                              {dateStr}
+                            </span>
+                            <span className="text-slate-300">·</span>
+                          </>
+                        )}
+                        {tpl.rules.slice(0, 3).map((r, rIdx) => (
+                          <span
+                            key={rIdx}
+                            className="px-1.5 py-0.2 bg-white border border-slate-200/80 rounded text-slate-600 truncate max-w-[110px]"
+                            title={`${r.labelPattern || r.fieldName}: ${String(r.value)}`}
+                          >
+                            {r.labelPattern || r.fieldName}: <strong className="font-normal text-slate-800">{String(r.value)}</strong>
+                          </span>
+                        ))}
+                        {tpl.rules.length > 3 && (
+                          <span className="text-slate-400 text-[9px]">+{tpl.rules.length - 3}</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
+
+          {/* 常用与历史填表卡片 (一键填表) */}
+          <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 font-bold text-slate-800">
+                <History className="w-4 h-4 text-emerald-600" />
+                <span>常用与历史填表</span>
+                {histories.length > 0 && (
+                  <span className="text-[10px] bg-emerald-50 text-emerald-700 px-1.5 py-0.2 rounded-full font-medium">
+                    {histories.length}
+                  </span>
+                )}
+              </div>
+              {histories.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setIsHistoryExpanded(!isHistoryExpanded)}
+                  className="text-slate-400 hover:text-slate-600 transition-colors p-1 cursor-pointer"
+                  title={isHistoryExpanded ? '折叠列表' : '展开列表'}
+                >
+                  {isHistoryExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                </button>
+              )}
+            </div>
+
+            {histories.length === 0 ? (
+              <p className="text-[11px] text-slate-400 py-1">
+                💡 成功填充表单后将自动记录，后续在此可一键秒级回填
+              </p>
+            ) : isHistoryExpanded ? (
+              <div className="flex flex-col gap-2 max-h-64 overflow-y-auto pr-1">
+                {histories.map((h) => {
+                  const isCurrentlyFilling = isQuickFillingId === h.id;
+                  const timeStr = new Date(h.timestamp).toLocaleDateString('zh-CN', {
                     month: 'numeric',
                     day: 'numeric',
                     hour: '2-digit',
                     minute: '2-digit',
-                  })
-                : '';
-              return (
-                <div
-                  key={tpl.id}
-                  className="p-2.5 rounded-lg border border-slate-200 bg-slate-50/70 hover:border-slate-300 transition-all flex flex-col gap-1.5"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5 truncate max-w-[190px]">
-                      <span className="font-semibold text-slate-800 text-[11px] truncate" title={tpl.name}>
-                        {tpl.name}
-                      </span>
-                      <span className="text-[9px] bg-slate-200/80 text-slate-600 px-1.5 py-0.2 rounded shrink-0">
-                        {tpl.rules.length} 项
-                      </span>
-                    </div>
+                  });
+                  return (
+                    <div
+                      key={h.id}
+                      className={`p-2.5 rounded-lg border transition-all flex flex-col gap-1.5 ${
+                        h.isFavorite
+                          ? 'bg-amber-50/40 border-amber-200/80 shadow-2xs'
+                          : 'bg-slate-50/70 border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 truncate max-w-[190px]">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleFavorite(h.id)}
+                            className={`transition-colors shrink-0 cursor-pointer ${
+                              h.isFavorite ? 'text-amber-500 fill-amber-500' : 'text-slate-300 hover:text-amber-400'
+                            }`}
+                            title={h.isFavorite ? '取消常用' : '设为常用'}
+                          >
+                            <Star className={`w-3.5 h-3.5 ${h.isFavorite ? 'fill-current' : ''}`} />
+                          </button>
+                          <span className="font-semibold text-slate-800 text-[11px] truncate" title={h.title}>
+                            {h.title}
+                          </span>
+                        </div>
 
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => handleApplyTemplate(tpl.id)}
-                        disabled={isExecuting}
-                        className="px-2 py-0.5 bg-slate-200/70 hover:bg-slate-200 text-slate-700 rounded text-[10px] font-medium transition-colors"
-                        title="载入到下方方案预览中微调修改"
-                      >
-                        套用
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleQuickFillTemplate(tpl)}
-                        disabled={isExecuting}
-                        className="px-2.5 py-0.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded text-[10px] font-medium flex items-center gap-0.5 transition-colors shadow-2xs"
-                        title="一键直接填充当前网页"
-                      >
-                        <Zap className="w-2.5 h-2.5" />
-                        <span>{isCurrentlyFilling ? '填充中...' : '一键填充'}</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteTemplate(tpl.id)}
-                        className="text-slate-300 hover:text-red-500 transition-colors p-0.5 ml-0.5"
-                        title="删除此模板"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleLoadHistory(h)}
+                            disabled={isExecuting}
+                            className="px-2 py-0.5 bg-slate-200/70 hover:bg-slate-200 text-slate-700 rounded text-[10px] font-medium transition-colors cursor-pointer"
+                            title="载入并切换至方案预览中微调修改"
+                          >
+                            载入
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleQuickFill(h)}
+                            disabled={isExecuting}
+                            className="px-2.5 py-0.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded text-[10px] font-medium flex items-center gap-0.5 transition-colors shadow-2xs cursor-pointer"
+                            title="一键直接填充当前网页"
+                          >
+                            <Zap className="w-2.5 h-2.5" />
+                            <span>{isCurrentlyFilling ? '填充中...' : '一键填表'}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteHistory(h.id)}
+                            className="text-slate-300 hover:text-red-500 transition-colors p-0.5 ml-0.5 cursor-pointer"
+                            title="删除此记录"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
 
-                  {/* 字段规则预览标签 */}
-                  <div className="flex items-center gap-1 flex-wrap text-[10px] text-slate-600">
-                    {dateStr && (
-                      <>
+                      {/* 字段摘要预览标签 */}
+                      <div className="flex items-center gap-1 flex-wrap text-[10px] text-slate-600">
                         <span className="text-slate-400 flex items-center gap-0.5">
                           <Clock className="w-2.5 h-2.5" />
-                          {dateStr}
+                          {timeStr}
                         </span>
                         <span className="text-slate-300">·</span>
-                      </>
-                    )}
-                    {tpl.rules.slice(0, 3).map((r, rIdx) => (
-                      <span
-                        key={rIdx}
-                        className="px-1.5 py-0.2 bg-white border border-slate-200/80 rounded text-slate-600 truncate max-w-[110px]"
-                        title={`${r.labelPattern || r.fieldName}: ${String(r.value)}`}
-                      >
-                        {r.labelPattern || r.fieldName}: <strong className="font-normal text-slate-800">{String(r.value)}</strong>
-                      </span>
-                    ))}
-                    {tpl.rules.length > 3 && (
-                      <span className="text-slate-400 text-[9px]">+{tpl.rules.length - 3}</span>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : null}
-      </div>
-
-      {/* 常用与历史填表卡片 (一键填表) */}
-      <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs flex flex-col gap-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5 font-bold text-slate-800">
-            <History className="w-4 h-4 text-emerald-600" />
-            <span>常用与历史填表</span>
-            {histories.length > 0 && (
-              <span className="text-[10px] bg-emerald-50 text-emerald-700 px-1.5 py-0.2 rounded-full font-medium">
-                {histories.length}
-              </span>
-            )}
-          </div>
-          {histories.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setIsHistoryExpanded(!isHistoryExpanded)}
-              className="text-slate-400 hover:text-slate-600 transition-colors p-1"
-              title={isHistoryExpanded ? '折叠列表' : '展开列表'}
-            >
-              {isHistoryExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-            </button>
-          )}
-        </div>
-
-        {histories.length === 0 ? (
-          <p className="text-[11px] text-slate-400 py-1">
-            💡 成功填充表单后将自动记录，后续在此可一键秒级回填
-          </p>
-        ) : isHistoryExpanded ? (
-          <div className="flex flex-col gap-2 max-h-56 overflow-y-auto pr-1">
-            {histories.map((h) => {
-              const isCurrentlyFilling = isQuickFillingId === h.id;
-              const timeStr = new Date(h.timestamp).toLocaleDateString('zh-CN', {
-                month: 'numeric',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-              });
-              return (
-                <div
-                  key={h.id}
-                  className={`p-2.5 rounded-lg border transition-all flex flex-col gap-1.5 ${
-                    h.isFavorite
-                      ? 'bg-amber-50/40 border-amber-200/80 shadow-2xs'
-                      : 'bg-slate-50/70 border-slate-200 hover:border-slate-300'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5 truncate max-w-[190px]">
-                      <button
-                        type="button"
-                        onClick={() => handleToggleFavorite(h.id)}
-                        className={`transition-colors shrink-0 ${
-                          h.isFavorite ? 'text-amber-500 fill-amber-500' : 'text-slate-300 hover:text-amber-400'
-                        }`}
-                        title={h.isFavorite ? '取消常用' : '设为常用'}
-                      >
-                        <Star className={`w-3.5 h-3.5 ${h.isFavorite ? 'fill-current' : ''}`} />
-                      </button>
-                      <span className="font-semibold text-slate-800 text-[11px] truncate" title={h.title}>
-                        {h.title}
-                      </span>
+                        {h.fields.slice(0, 3).map((f, fIdx) => (
+                          <span
+                            key={fIdx}
+                            className="px-1.5 py-0.2 bg-white border border-slate-200/80 rounded text-slate-600 truncate max-w-[110px]"
+                            title={`${f.label}: ${String(f.value)}`}
+                          >
+                            {f.label}: <strong className="font-normal text-slate-800">{String(f.value)}</strong>
+                          </span>
+                        ))}
+                        {h.fields.length > 3 && (
+                          <span className="text-slate-400 text-[9px]">+{h.fields.length - 3}</span>
+                        )}
+                      </div>
                     </div>
-
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => handleLoadHistory(h)}
-                        disabled={isExecuting}
-                        className="px-2 py-0.5 bg-slate-200/70 hover:bg-slate-200 text-slate-700 rounded text-[10px] font-medium transition-colors"
-                        title="载入到下方方案预览中微调修改"
-                      >
-                        载入
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleQuickFill(h)}
-                        disabled={isExecuting}
-                        className="px-2.5 py-0.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded text-[10px] font-medium flex items-center gap-0.5 transition-colors shadow-2xs"
-                        title="一键直接填充当前网页"
-                      >
-                        <Zap className="w-2.5 h-2.5" />
-                        <span>{isCurrentlyFilling ? '填充中...' : '一键填表'}</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteHistory(h.id)}
-                        className="text-slate-300 hover:text-red-500 transition-colors p-0.5 ml-0.5"
-                        title="删除此记录"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* 字段摘要预览标签 */}
-                  <div className="flex items-center gap-1 flex-wrap text-[10px] text-slate-600">
-                    <span className="text-slate-400 flex items-center gap-0.5">
-                      <Clock className="w-2.5 h-2.5" />
-                      {timeStr}
-                    </span>
-                    <span className="text-slate-300">·</span>
-                    {h.fields.slice(0, 3).map((f, fIdx) => (
-                      <span
-                        key={fIdx}
-                        className="px-1.5 py-0.2 bg-white border border-slate-200/80 rounded text-slate-600 truncate max-w-[110px]"
-                        title={`${f.label}: ${String(f.value)}`}
-                      >
-                        {f.label}: <strong className="font-normal text-slate-800">{String(f.value)}</strong>
-                      </span>
-                    ))}
-                    {h.fields.length > 3 && (
-                      <span className="text-slate-400 text-[9px]">+{h.fields.length - 3}</span>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : null}
-      </div>
-
-      {/* 填写要求与策略输入 */}
-      <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs flex flex-col gap-2.5">
-        <div className="flex items-center justify-between">
-          <span className="font-bold text-slate-800 flex items-center gap-1.5">
-            <Edit3 className="w-3.5 h-3.5 text-slate-600" />
-            <span>填写要求与模式</span>
-          </span>
-          <span className="text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded font-medium flex items-center gap-1">
-            <Sparkles className="w-2.5 h-2.5" />
-            {aiProviderService.activeProvider.label}
-          </span>
-        </div>
-
-        {/* 模板复用栏 (IMP-10) */}
-        {templates.length > 0 && (
-          <div className="flex items-center gap-1.5 p-2 bg-slate-50 rounded-lg border border-slate-200">
-            <FolderCheck className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-            <select
-              value={selectedTemplateId}
-              onChange={(e) => setSelectedTemplateId(e.target.value)}
-              className="flex-1 bg-white border border-slate-200 rounded px-1.5 py-1 text-[11px] text-slate-800 truncate"
-            >
-              <option value="">-- 选择已有填写模板 --</option>
-              {templates.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name} ({t.rules.length} 项)
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={() => handleApplyTemplate(selectedTemplateId)}
-              disabled={!selectedTemplateId || !snapshot}
-              className="px-2 py-1 bg-slate-200 hover:bg-slate-300 disabled:opacity-40 text-slate-700 rounded text-[11px] font-medium shrink-0 transition-colors"
-              title="载入到下方方案预览中微调"
-            >
-              套用
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const t = templates.find((tpl) => tpl.id === selectedTemplateId);
-                if (t) handleQuickFillTemplate(t);
-              }}
-              disabled={!selectedTemplateId || isExecuting}
-              className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white rounded text-[11px] font-medium shrink-0 transition-colors flex items-center gap-1 shadow-2xs"
-              title="直接一键填充当前网页"
-            >
-              <Zap className="w-3 h-3" />
-              <span>{isQuickFillingTemplateId === selectedTemplateId ? '填充中...' : '一键填充'}</span>
-            </button>
-          </div>
-        )}
-
-        <textarea
-          value={instruction}
-          onChange={(e) => setInstruction(e.target.value)}
-          rows={2}
-          placeholder="例如：联系人张三，公司星河科技，行业软件服务，其他空白字段合理生成"
-          className="w-full p-2 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-blue-500 focus:outline-hidden"
-        />
-
-        <input
-          type="text"
-          value={sourceText}
-          onChange={(e) => setSourceText(e.target.value)}
-          placeholder="可选：补充业务资料（如客户简介或参数文本）"
-          className="w-full p-1.5 border border-slate-200 rounded-lg text-[11px] focus:ring-1 focus:ring-blue-500 focus:outline-hidden"
-        />
-
-        {/* 策略模式选择 */}
-        <div className="flex items-center gap-4 text-[11px] text-slate-600">
-          <label className="flex items-center gap-1.5 cursor-pointer">
-            <input
-              type="radio"
-              name="fillMode"
-              checked={fillMode === 'empty_only'}
-              onChange={() => setFillMode('empty_only')}
-              className="text-blue-600"
-            />
-            <span className="font-medium">仅填空白（默认保留已有值）</span>
-          </label>
-          <label className="flex items-center gap-1.5 cursor-pointer">
-            <input
-              type="radio"
-              name="fillMode"
-              checked={fillMode === 'allow_overwrite'}
-              onChange={() => setFillMode('allow_overwrite')}
-              className="text-blue-600"
-            />
-            <span>允许覆盖</span>
-          </label>
-        </div>
-
-        <button
-          onClick={handleGeneratePlan}
-          disabled={!snapshot || isPlanning || isExecuting}
-          className="w-full py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
-        >
-          <Sparkles className="w-3.5 h-3.5" />
-          <span>{isPlanning ? '方案规划中...' : '生成填写方案'}</span>
-        </button>
-      </div>
-
-      {/* 方案预览与确认 */}
-      {assignments.length > 0 && (
-        <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs flex flex-col gap-2.5">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-            <span className="font-bold text-slate-800">
-              方案预览 ({assignments.filter((a) => a.checked).length}/{assignments.length})
-            </span>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleSaveAsTemplate}
-                className="text-[10px] text-emerald-600 hover:text-emerald-700 font-medium flex items-center gap-0.5 transition-colors"
-                title="将当前已勾选字段保存为可复用模板"
-              >
-                <BookmarkPlus className="w-3 h-3" />
-                <span>存为模板</span>
-              </button>
-              <button
-                onClick={() => setAssignments((prev) => prev.map((a) => ({ ...a, checked: true })))}
-                className="text-[10px] text-blue-600 hover:underline"
-              >
-                全选
-              </button>
-              <button
-                onClick={() => setAssignments((prev) => prev.map((a) => ({ ...a, checked: false })))}
-                className="text-[10px] text-slate-500 hover:underline"
-              >
-                清空
-              </button>
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-2 max-h-60 overflow-y-auto pr-1">
-            {assignments.map((item, idx) => (
-              <div
-                key={item.fieldId}
-                className={`p-2 rounded-lg border text-[11px] flex flex-col gap-1 transition-colors ${
-                  item.checked ? 'bg-blue-50/40 border-blue-200' : 'bg-slate-50/60 border-slate-200 opacity-70'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <label className="flex items-center gap-1.5 cursor-pointer font-medium text-slate-800">
-                    <input
-                      type="checkbox"
-                      checked={item.checked}
-                      onChange={(e) => {
-                        const checked = e.target.checked;
-                        setAssignments((prev) =>
-                          prev.map((a, i) => (i === idx ? { ...a, checked } : a))
-                        );
-                      }}
-                      className="rounded text-blue-600"
-                    />
-                    <span>{item.fieldLabel}</span>
-                    <span className="text-[9px] text-slate-400 font-normal">({item.fieldKind})</span>
-                  </label>
-                  <span
-                    className={`text-[9px] px-1.5 py-0.2 rounded font-medium ${
-                      item.source === 'instruction'
-                        ? 'bg-emerald-100 text-emerald-700'
-                        : item.source === 'generated'
-                          ? 'bg-purple-100 text-purple-700'
-                          : 'bg-slate-200 text-slate-600'
-                    }`}
-                  >
-                    {item.source === 'instruction' ? '指令匹配' : item.source === 'generated' ? '规则生成' : '保留'}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2 pl-5 text-slate-600">
-                  <span className="shrink-0 text-slate-400">当前:</span>
-                  <span className="truncate max-w-[80px]">
-                    {snapshot?.fields.find((field) => field.fieldId === item.fieldId)?.sensitive
-                      ? '••••••'
-                      : String(item.currentValue) || <em className="text-slate-300">空白</em>}
-                  </span>
-                  <span className="text-slate-300">→</span>
-                  <span className="shrink-0 text-slate-400">写入:</span>
-                  <input
-                    type="text"
-                    value={item.value !== undefined ? String(item.value) : ''}
-                    disabled={!item.checked}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      const field = currentFields.find((f) => f.fieldId === item.fieldId);
-                      let newOptionIds = item.optionIds;
-                      if (field && (field.kind === 'select' || field.kind === 'radio' || field.kind === 'checkbox') && field.options) {
-                        const trimmed = val.trim();
-                        const matched = field.options.find(
-                          (opt) => opt.value === trimmed || opt.label?.trim() === trimmed || opt.optionId === trimmed
-                        );
-                        newOptionIds = matched ? [matched.optionId] : undefined;
-                      }
-                      setAssignments((prev) =>
-                        prev.map((a, i) => (i === idx ? { ...a, value: val, optionIds: newOptionIds } : a))
-                      );
-                    }}
-                    className="flex-1 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-[11px] font-medium text-slate-800 focus:outline-hidden"
-                  />
-                </div>
+                  );
+                })}
               </div>
-            ))}
+            ) : null}
           </div>
-
-          {unresolved.length > 0 && (
-            <div className="p-2 bg-amber-50 rounded-lg text-[10px] text-amber-800 flex flex-col gap-1 border border-amber-200">
-              <span className="font-semibold flex items-center gap-1">
-                <AlertCircle className="w-3 h-3 text-amber-600" />
-                <span>{unresolved.length} 个字段未自动填充：</span>
-              </span>
-              <ul className="list-disc pl-4 space-y-0.5">
-                {unresolved.slice(0, 3).map((u, i) => (
-                  <li key={i}>{u.reason}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {/* 执行与停止按钮 */}
-          <div className="flex items-center gap-2 pt-1">
-            {isExecuting ? (
-              <button
-                onClick={handleCancelFill}
-                className="flex-1 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-1.5"
-              >
-                <StopCircle className="w-3.5 h-3.5" />
-                <span>停止填充</span>
-              </button>
-            ) : (
-              <button
-                onClick={handleExecuteFill}
-                disabled={assignments.filter((a) => a.checked).length === 0}
-                className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
-              >
-                <Play className="w-3.5 h-3.5" />
-                <span>执行填充</span>
-              </button>
-            )}
-
-            {lastRunRecord && lastRunRecord.status !== 'undone' && (
-              <button
-                onClick={handleUndo}
-                disabled={isExecuting}
-                className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium transition-colors flex items-center gap-1"
-                title="撤销本次填充（如已被手动修改则保留新值）"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>撤销</span>
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* 历史执行结果简报 */}
-      {lastRunRecord && (
-        <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <span className="font-bold text-slate-800 flex items-center gap-1.5">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-              <span>填充执行报告</span>
-            </span>
-            <span
-              className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                lastRunRecord.status === 'completed'
-                  ? 'bg-emerald-100 text-emerald-700'
-                  : lastRunRecord.status === 'undone'
-                    ? 'bg-slate-200 text-slate-600'
-                    : 'bg-amber-100 text-amber-700'
-              }`}
-            >
-              {lastRunRecord.status === 'completed'
-                ? '全部成功'
-                : lastRunRecord.status === 'partial'
-                  ? '部分成功'
-                  : lastRunRecord.status === 'undone'
-                    ? '已撤销'
-                    : lastRunRecord.status === 'failed'
-                      ? '执行失败'
-                      : '已停止'}
-            </span>
-          </div>
-
-          <div className="flex flex-col gap-1 text-[11px] text-slate-600">
-            {lastRunRecord.steps.map((step) => (
-              <div key={step.fieldId} className="flex flex-col gap-1 border-b border-slate-100 last:border-0 py-1.5 select-text">
-                <span className="truncate max-w-[160px] text-slate-700">{snapshot?.fields.find((field) => field.fieldId === step.fieldId)?.label || assignments.find((item) => item.fieldId === step.fieldId)?.fieldLabel || step.fieldId.split('_').slice(-1)[0]}</span>
-                {step.status === 'success' ? (
-                  <span className="text-emerald-600 font-medium">✓ 已写入并回读</span>
-                ) : step.status === 'skipped' ? (
-                  <span className="text-slate-400 whitespace-pre-wrap break-words">跳过：{step.skippedReason || step.error || '未执行'}</span>
-                ) : (
-                  <span className="text-red-600 whitespace-pre-wrap break-words select-text" title={step.error}>
-                    × {step.error || '失败'}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
+        </>
       )}
     </div>
   );

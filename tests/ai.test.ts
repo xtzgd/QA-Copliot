@@ -113,12 +113,57 @@ describe('AI Copilot 增强 (E4 - TASK-401 ~ TASK-407)', () => {
     expect(JSON.parse(String(capturedInit?.body))).toEqual(expect.objectContaining({ version: 1, task: 'generate_bug' }));
   });
 
-  it('normalizeLlmEndpoint 正确规范化各种形式的大模型 Base URL', async () => {
+  it('normalizeLlmEndpoint 支持根据 endpointType 进行补全 (chat/responses/none)', async () => {
     const { normalizeLlmEndpoint } = await import('../src/ai');
-    expect(normalizeLlmEndpoint('https://api.deepseek.com')).toBe('https://api.deepseek.com/v1/chat/completions');
-    expect(normalizeLlmEndpoint('https://api.deepseek.com/v1/')).toBe('https://api.deepseek.com/v1/chat/completions');
+    // 默认或 'chat' 模式：补全 /chat/completions
     expect(normalizeLlmEndpoint('https://api.openai.com/v1/chat/completions')).toBe('https://api.openai.com/v1/chat/completions');
-    expect(normalizeLlmEndpoint('http://localhost:11434/v1')).toBe('http://localhost:11434/v1/chat/completions');
+    expect(normalizeLlmEndpoint('https://api.deepseek.com/v1')).toBe('https://api.deepseek.com/v1/chat/completions');
+    expect(normalizeLlmEndpoint('https://aihub.top')).toBe('https://aihub.top/v1/chat/completions');
+    expect(normalizeLlmEndpoint('https://aihub.top/v1/responses', 'chat')).toBe('https://aihub.top/v1/chat/completions');
+
+    // 'responses' 模式：补全 /responses
+    expect(normalizeLlmEndpoint('https://api.openai.com/v1/responses', 'responses')).toBe('https://api.openai.com/v1/responses');
+    expect(normalizeLlmEndpoint('https://api.openai.com/v1', 'responses')).toBe('https://api.openai.com/v1/responses');
+    expect(normalizeLlmEndpoint('https://aihub.top', 'responses')).toBe('https://aihub.top/v1/responses');
+    expect(normalizeLlmEndpoint('https://aihub.top/v1/chat/completions', 'responses')).toBe('https://aihub.top/v1/responses');
+
+    // 'none' 模式：不自动补全，原样使用用户输入
+    expect(normalizeLlmEndpoint('  https://api.proxy.com/my/custom/path  ', 'none')).toBe('https://api.proxy.com/my/custom/path');
+    expect(normalizeLlmEndpoint('https://my-gateway.internal/v2/generate', 'none')).toBe('https://my-gateway.internal/v2/generate');
+  });
+
+  it('fetchAvailableModels 能从 /v1/models 查询中转站或官方开通的模型列表', async () => {
+    const { OpenAILlmProviderAdapter } = await import('../src/ai');
+    let requestedUrl = '';
+    let authHeader = '';
+    const mockFetcher = (async (url: string, init?: RequestInit) => {
+      requestedUrl = url;
+      authHeader = (init?.headers as any)?.Authorization || '';
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: [
+            { id: 'gpt-5.2', display_name: 'GPT-5.2' },
+            { id: 'gpt-5.4-mini', name: 'GPT-5.4-mini' },
+          ],
+        }),
+      } as any;
+    }) as any;
+
+    const adapter = new OpenAILlmProviderAdapter({}, mockFetcher);
+    const result = await adapter.fetchAvailableModels({
+      baseUrl: 'https://aihub.top/v1/chat/completions',
+      apiKey: 'sk-test-123456',
+    });
+
+    expect(requestedUrl).toBe('https://aihub.top/v1/models');
+    expect(authHeader).toBe('Bearer sk-test-123456');
+    expect(result.success).toBe(true);
+    expect(result.models).toEqual([
+      { id: 'gpt-5.2', name: 'GPT-5.2' },
+      { id: 'gpt-5.4-mini', name: 'GPT-5.4-mini' },
+    ]);
   });
 
   it('extractJsonFromLlmResponse 能够从大模型包裹的 Markdown 代码块或文本中稳健提取 JSON', async () => {
@@ -162,7 +207,7 @@ describe('AI Copilot 增强 (E4 - TASK-401 ~ TASK-407)', () => {
 
     const adapter = new OpenAILlmProviderAdapter(
       {
-        baseUrl: 'https://api.deepseek.com/v1',
+        baseUrl: 'https://api.deepseek.com/v1/chat/completions',
         apiKey: 'sk-test-secret-key',
         model: 'deepseek-chat',
       },
@@ -213,7 +258,7 @@ describe('AI Copilot 增强 (E4 - TASK-401 ~ TASK-407)', () => {
 
     const adapterSuccess = new OpenAILlmProviderAdapter(
       {
-        baseUrl: 'https://api.deepseek.com/v1',
+        baseUrl: 'https://api.deepseek.com/v1/chat/completions',
         apiKey: 'sk-valid-key',
         model: 'deepseek-chat',
       },
@@ -232,7 +277,7 @@ describe('AI Copilot 增强 (E4 - TASK-401 ~ TASK-407)', () => {
 
     const adapterFail = new OpenAILlmProviderAdapter(
       {
-        baseUrl: 'https://api.deepseek.com/v1',
+        baseUrl: 'https://api.deepseek.com/v1/chat/completions',
         apiKey: 'sk-invalid',
       },
       authFailFetcher as any
@@ -329,7 +374,7 @@ describe('AI Copilot 增强 (E4 - TASK-401 ~ TASK-407)', () => {
 
     const adapter = new OpenAILlmProviderAdapter(
       {
-        baseUrl: 'https://api.openai.com/v1',
+        baseUrl: 'https://api.openai.com/v1/chat/completions',
         apiKey: 'sk-test',
         model: 'gpt-4o',
       },
@@ -402,7 +447,7 @@ describe('AI Copilot 增强 (E4 - TASK-401 ~ TASK-407)', () => {
 
     const adapter = new OpenAILlmProviderAdapter(
       {
-        baseUrl: 'https://api.deepseek.com/v1',
+        baseUrl: 'https://api.deepseek.com/v1/chat/completions',
         apiKey: 'sk-test',
         model: 'deepseek-chat',
       },
@@ -491,7 +536,7 @@ describe('AI Copilot 增强 (E4 - TASK-401 ~ TASK-407)', () => {
     };
 
     const adapter = new OpenAILlmProviderAdapter(
-      { baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-test', model: 'gpt-4o' },
+      { baseUrl: 'https://api.openai.com/v1/chat/completions', apiKey: 'sk-test', model: 'gpt-4o' },
       arrayFetcher as any
     );
 
@@ -561,7 +606,7 @@ describe('AI Copilot 增强 (E4 - TASK-401 ~ TASK-407)', () => {
     };
 
     const adapter = new OpenAILlmProviderAdapter(
-      { baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-test', model: 'deepseek-r1' },
+      { baseUrl: 'https://api.openai.com/v1/chat/completions', apiKey: 'sk-test', model: 'deepseek-r1' },
       reasoningFetcher as any
     );
 
@@ -651,7 +696,7 @@ describe('AI Copilot 增强 (E4 - TASK-401 ~ TASK-407)', () => {
     };
 
     const adapter = new OpenAILlmProviderAdapter(
-      { baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-test', model: 'vision-model' },
+      { baseUrl: 'https://api.openai.com/v1/chat/completions', apiKey: 'sk-test', model: 'vision-model' },
       conversationalFetcher as any
     );
 
@@ -704,7 +749,7 @@ describe('AI Copilot 增强 (E4 - TASK-401 ~ TASK-407)', () => {
     };
 
     const adapter = new OpenAILlmProviderAdapter(
-      { baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-test', model: 'gpt-4o' },
+      { baseUrl: 'https://api.openai.com/v1/chat/completions', apiKey: 'sk-test', model: 'gpt-4o' },
       mockFetcher as any
     );
 
@@ -751,5 +796,87 @@ describe('AI Copilot 增强 (E4 - TASK-401 ~ TASK-407)', () => {
     expect(sentElements.length).toBeGreaterThanOrEqual(110);
     expect(sentElements.some((e: any) => e.id === '0:el-110')).toBe(true);
   });
+
+  it('planBrowserAction 支持输出 navigate 跨系统导航动作且 Prompt 包含对应规范', async () => {
+    const { OpenAILlmProviderAdapter } = await import('../src/ai');
+
+    let capturedBody: any = null;
+    const fetcher = async (_url: string, init?: RequestInit) => {
+      capturedBody = JSON.parse(init?.body as string);
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  action: 'navigate',
+                  url: 'http://erp.local/approve',
+                  reason: '跨系统跳转到审批中心',
+                }),
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    };
+
+    const adapter = new OpenAILlmProviderAdapter(
+      { baseUrl: 'https://api.openai.com/v1/chat/completions', apiKey: 'sk-test', model: 'vision-model' },
+      fetcher as any
+    );
+
+    const plan = await adapter.planBrowserAction({
+      instruction: '打开 http://erp.local/approve 审核请假单',
+      mode: 'act',
+      history: [],
+      observations: [
+        {
+          frameId: 0,
+          frameUrl: 'https://oa.local/leave',
+          title: '请假申请',
+          text: '',
+          scrollY: 0,
+          scrollX: 0,
+          elements: [],
+        },
+      ],
+    });
+
+    expect(plan.action).toBe('navigate');
+    expect((plan as any).url).toBe('http://erp.local/approve');
+    expect((plan as any).reason).toBe('跨系统跳转到审批中心');
+
+    // 检查 systemPrompt 包含跨系统导航规范
+    const systemPromptText = capturedBody.messages[0].content;
+    expect(systemPromptText).toContain('【跨系统与页面导航（navigate）核心原则】');
+  });
+
+  it('extractBrowserPlanFromRawText 和 inferPlanFromNaturalText 均支持 navigate 动作容错提取', async () => {
+    const { extractBrowserPlanFromRawText, inferPlanFromNaturalText } = await import('../src/ai');
+
+    // 1. 正则提取器提取 navigate
+    const rawJsonWithNoise = `Thinking: Need to switch to ERP system.
+    {
+      "action": "navigate",
+      "url": "https://erp.company.com/login",
+      "reason": "切换到 ERP 登录页"
+    }`;
+    const plan1 = extractBrowserPlanFromRawText(rawJsonWithNoise);
+    expect(plan1?.action).toBe('navigate');
+    expect((plan1 as any)?.url).toBe('https://erp.company.com/login');
+
+    // 2. 自然语言推断器提取 navigate
+    const rawConversational = 'I should now navigate to https://sso.portal.com/auth to continue the cross-system workflow.';
+    const plan2 = inferPlanFromNaturalText(rawConversational, {
+      instruction: '跳转到 SSO 授权',
+      mode: 'act',
+      history: [],
+      observations: [],
+    });
+    expect(plan2?.action).toBe('navigate');
+    expect((plan2 as any)?.url).toBe('https://sso.portal.com/auth');
+  });
 });
+
 

@@ -14,6 +14,7 @@ export interface BugSnapshot {
   createdAt: number;
   url: string;
   environment?: string;
+  currentUser?: string; // 当前登录账号/用户
   browserInfo: BrowserContextInfo;
   windowDurationSec: number; // 上下文时间窗口（秒）
   contextBeforeSec?: number;
@@ -41,7 +42,7 @@ export interface BugSubmissionRecord {
   externalId: string; // 远端 Bug 编号
   externalUrl: string; // 远端完整查看链接
   submittedAt: number; // 提交时间戳
-  attachmentStatus: 'uploaded' | 'failed' | 'unsupported' | 'none';
+  attachmentStatus: 'uploaded' | 'failed' | 'unsupported' | 'embedded' | 'none';
   attachmentError?: string; // 失败原因
 }
 
@@ -57,6 +58,7 @@ export interface Bug {
   expectedResult: string;
   actualResult: string;
   aiAnalysis?: string;
+  currentUser?: string; // 当前登录账号/用户
   externalPlatform?: 'zentao';
   externalId?: string;
   externalUrl?: string;

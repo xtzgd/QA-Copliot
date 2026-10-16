@@ -52,7 +52,13 @@ export class FormDOMRegistry {
     if (!entry) return undefined;
     for (const [label, node] of entry.optionElements!) {
       const radio = (node.tagName === 'INPUT' ? node : node.querySelector?.('input[type="radio"]')) as HTMLInputElement | null;
-      if (radio?.checked) return label;
+      const isChecked = radio?.checked || Boolean(
+        node.classList?.contains?.('is-checked') ||
+        node.classList?.contains?.('ant-radio-checked') ||
+        node.classList?.contains?.('arco-radio-checked') ||
+        node.getAttribute?.('aria-checked') === 'true'
+      );
+      if (isChecked) return label;
     }
     return '';
   }
@@ -520,6 +526,7 @@ export class FormScanner {
       let unsupportedReason: string | undefined;
       let options: FormFieldOption[] | undefined;
       let optionsState: FormFieldItem['optionsState'] = 'none';
+      let isMultiple = false;
       let groupName: string | undefined;
 
       // 检查是否为验证码或文件
@@ -542,6 +549,7 @@ export class FormScanner {
 
         if (tag === 'select') {
           const select = element as HTMLSelectElement;
+          isMultiple = select.multiple;
           optionsState = 'complete';
           options = Array.from(select.options).map((opt, optIdx) => ({
             optionId: opt.id || `opt_${optIdx}_${opt.value}`,
@@ -555,6 +563,17 @@ export class FormScanner {
         } else {
           // 自定义下拉框（如 .el-select, .ant-select, .arco-select, .n-select 等）
           const selectWrapper = canonicalWrapper;
+          isMultiple = Boolean(
+            canonicalWrapper.classList?.contains?.('is-multiple') ||
+            canonicalWrapper.classList?.contains?.('el-select--multiple') ||
+            canonicalWrapper.classList?.contains?.('ant-select-multiple') ||
+            canonicalWrapper.classList?.contains?.('ant-tree-select-multiple') ||
+            canonicalWrapper.classList?.contains?.('arco-select-multiple') ||
+            canonicalWrapper.classList?.contains?.('n-base-selection--multiple') ||
+            canonicalWrapper.querySelector?.('.el-select__tags, .ant-select-selection-overflow, .vue-treeselect__multi-value') ||
+            canonicalWrapper.getAttribute?.('aria-multiselectable') === 'true' ||
+            element.getAttribute?.('aria-multiselectable') === 'true'
+          );
 
           const trigger = (
             selectWrapper.querySelector?.('.el-select__wrapper, .select-trigger, .ant-select-selector, .arco-select-view, .n-base-selection, input') ||
@@ -562,7 +581,10 @@ export class FormScanner {
             selectWrapper
           ) as HTMLElement;
 
-          // 1. 尝试从组件库专门渲染选中项的容器提取当前值
+          // 1. 尝试从组件库专门渲染选中项的容器提取当前值（支持多选 Tag 文本合并与单选高亮项）
+          const tagNodes = selectWrapper.querySelectorAll?.(
+            '.el-select__tags-text, .ant-select-selection-item-content, .vue-treeselect__multi-value-item, .arco-tag'
+          );
           const selectedItemEl = selectWrapper.querySelector?.(
             '.el-select__selected-item:not(.is-transparent), .el-select__tags-text, .ant-select-selection-item, .ant-select-selection-selected-value, .arco-select-view-value, .n-base-selection-label, .el-select-dropdown__item.is-selected, .vue-treeselect__single-value, [class*="single-value"]'
           );
@@ -573,9 +595,16 @@ export class FormScanner {
             '';
 
           let displayVal = '';
-          if (selectedItemEl && selectedItemEl.textContent?.trim()) {
+          if (tagNodes && tagNodes.length > 0) {
+            const tagTexts = Array.from(tagNodes).map((n: any) => n.textContent?.trim() || '').filter(Boolean);
+            if (tagTexts.length > 0) {
+              displayVal = tagTexts.join(', ');
+            }
+          }
+          if (!displayVal && selectedItemEl && selectedItemEl.textContent?.trim()) {
             displayVal = selectedItemEl.textContent.trim();
           } else if (
+            !displayVal &&
             innerInput &&
             innerInput.value &&
             innerInput.value !== placeholder &&
@@ -592,7 +621,7 @@ export class FormScanner {
           isEmpty = !displayVal || displayVal === placeholder || displayVal.includes('请选择') || displayVal.toLowerCase().includes('select') || displayVal === '--请选择--';
 
           // 2. 尝试采集已挂载到 body/组件 上的下拉项（支持 TreeSelect、Cascader 及多种现代组件库）
-          const probedOptions = FormScanner.extractDropdownOptionsFromDom(element, selectWrapper, root);
+          const probedOptions = FormScanner.extractDropdownOptionsFromDom(element, selectWrapper, root, label);
           if (probedOptions.length > 0) {
             options = probedOptions;
             optionsState = 'complete';
@@ -659,6 +688,7 @@ export class FormScanner {
         },
         optionsState,
         options,
+        isMultiple: isDropdown ? isMultiple : undefined,
         groupName,
         unsupportedReason,
       };
@@ -725,10 +755,10 @@ export class FormScanner {
       radios.forEach((radio, rIdx) => {
         // 提取该选项的人类可读标签（从外层 label 或兄弟 span）
         const parentNode = radio.parentElement;
-        const labelWrapper = (parentNode ? (parentNode.closest('label, .el-radio, .ant-radio') || parentNode) : radio.closest('label, .el-radio, .ant-radio')) as HTMLElement | null;
+        const labelWrapper = (parentNode ? (parentNode.closest('label, .el-radio, .ant-radio, .arco-radio, .n-radio, .t-radio, .semi-radio') || parentNode) : radio.closest('label, .el-radio, .ant-radio, .arco-radio, .n-radio, .t-radio, .semi-radio')) as HTMLElement | null;
         let optLabel = '';
         if (labelWrapper) {
-          const radioTextSpan = labelWrapper.querySelector('.el-radio__label, .ant-radio-wrapper, span');
+          const radioTextSpan = labelWrapper.querySelector('.el-radio__label, .ant-radio-wrapper, .arco-radio-text, span');
           if (radioTextSpan && radioTextSpan.textContent && radioTextSpan.textContent.trim()) {
             optLabel = radioTextSpan.textContent.trim();
           } else {
@@ -757,7 +787,17 @@ export class FormScanner {
         optionElements.set(optVal, clickTarget);
         optionElements.set(optId, clickTarget);
 
-        if (radio.checked) {
+        const isChecked = Boolean(
+          radio.checked ||
+          labelWrapper?.classList?.contains?.('is-checked') ||
+          labelWrapper?.classList?.contains?.('ant-radio-checked') ||
+          labelWrapper?.classList?.contains?.('arco-radio-checked') ||
+          labelWrapper?.classList?.contains?.('n-radio--checked') ||
+          radio.getAttribute?.('aria-checked') === 'true' ||
+          labelWrapper?.getAttribute?.('aria-checked') === 'true'
+        );
+
+        if (isChecked) {
           checkedLabel = optLabel;
         }
       });
@@ -852,16 +892,16 @@ export class FormScanner {
     }
   }
 
-  static extractOptionsFromContainer(container: HTMLElement | Element): FormFieldOption[] {
+  static extractOptionsFromContainer(container: HTMLElement | Element, allowSidebarTree = false): FormFieldOption[] {
     if (!container || typeof (container as any).querySelectorAll !== 'function') return [];
     try {
       const raw = Array.from((container as any).querySelectorAll(this.DROPDOWN_OPTION_SELECTORS)) as HTMLElement[];
       const validNodes = raw.filter((el) => {
         if (!el) return false;
-        // 排除侧栏内部节点，防止误采背景树
-        if (el.closest?.('aside, nav, .sidebar, .org-tree, [class*="sidebar"]')) return false;
+        // 排除侧栏内部节点，防止误采背景树（但在提取部门树候选项模式下豁免）
+        if (!allowSidebarTree && el.closest?.('aside, nav, .sidebar, .org-tree, [class*="sidebar"]')) return false;
         // 排除大容器（避免父级树分支重复当选项）
-        if (el.querySelector?.('.el-select-dropdown__item, .el-tree-node__content, .vue-treeselect__label, [role="option"]')) return false;
+        if (el.querySelector?.('.el-select-dropdown__item, .el-tree-node__content, .vue-treeselect__option, [role="option"], [role="treeitem"]')) return false;
         return true;
       });
 
@@ -870,7 +910,7 @@ export class FormScanner {
 
       for (let idx = 0; idx < validNodes.length; idx++) {
         const el = validNodes[idx];
-        const rawText = (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ');
+        const rawText = (el.querySelector?.('.vue-treeselect__label, .el-tree-node__label, .el-cascader-node__label')?.textContent || el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ');
         if (!rawText || rawText.includes('请选择') || rawText.toLowerCase().includes('select') || rawText === '--请选择--') continue;
 
         // 关键：去掉类似 (2) 或角标计数，获取纯净部门/选项名称
@@ -912,15 +952,15 @@ export class FormScanner {
     const docContext = element.ownerDocument || root;
     const innerInput = (element.tagName.toLowerCase() === 'input' ? element : selectWrapper.querySelector?.('input')) as HTMLInputElement | null;
 
-    // 1. 优先在组件内部查找（例如 vue-treeselect 的 menu 直接挂在组件内）
+    // 1. 优先在组件内部查找（例如 vue-treeselect 的 menu 直接挂在组件内），必须包含实际菜单或选项节点才直接选用
     const internalMenu = selectWrapper.querySelector?.(
       '.vue-treeselect__menu, .vue-treeselect__menu-container, [class*="treeselect"][class*="menu"], .el-select-dropdown'
     ) as HTMLElement | null;
-    if (internalMenu) {
+    if (internalMenu && (internalMenu.style?.display !== 'none' || internalMenu.querySelector?.(this.DROPDOWN_OPTION_SELECTORS))) {
       return internalMenu;
     }
 
-    // ARIA may point to an offscreen accessibility list, not the clickable menu.
+    // 2. ARIA may point to an offscreen accessibility list, not the clickable menu.
     const linkedNodes = [element, innerInput, selectWrapper, selectWrapper.querySelector?.('[aria-controls], [aria-owns]')].filter(Boolean) as HTMLElement[];
     for (const node of linkedNodes) {
       const ids = [node.getAttribute?.('aria-controls'), node.getAttribute?.('aria-owns')].filter(Boolean).join(' ').split(/\s+/).filter(Boolean);
@@ -931,42 +971,60 @@ export class FormScanner {
         let hidden = false;
         for (let current: HTMLElement | null = menu as HTMLElement; current; current = current.parentElement) {
           const style = current.ownerDocument?.defaultView?.getComputedStyle(current) || current.style;
-          if (current.hidden || current.getAttribute?.('aria-hidden') === 'true' || style?.display === 'none' || style?.visibility === 'hidden') { hidden = true; break; }
+          if (current.hidden || style?.display === 'none' || style?.visibility === 'hidden') { hidden = true; break; }
         }
         if (!hidden) return menu as HTMLElement;
       }
     }
 
     // 3. 检查页面上当前处于打开/可见状态且空间几何就近吸附的下拉浮层 (Midscene 空间几何就近原则)
+    // 关键修正：绝不能判定 popper.getAttribute('aria-hidden') === 'true'，因为 Element UI 等组件根标签硬编码了 aria-hidden！
     if (docContext && typeof (docContext as any).querySelectorAll === 'function') {
       const poppers = Array.from((docContext as any).querySelectorAll(
-        '.el-select-dropdown, .el-tree-select__popper, .el-cascader__dropdown, .el-cascader-panel, .ant-cascader-dropdown, .arco-cascader-popup, .n-cascader-menu, .ant-select-dropdown, .arco-select-popup, .vue-treeselect__portal-container, [class*="select-dropdown"]'
+        '.el-select-dropdown, .el-tree-select__popper, .el-cascader__dropdown, .el-cascader-panel, .ant-cascader-dropdown, .arco-cascader-popup, .n-cascader-menu, .ant-select-dropdown, .arco-select-popup, .vue-treeselect__portal-container, .vue-treeselect__menu, [class*="select-dropdown"]'
       )) as HTMLElement[];
 
       const wRect = typeof selectWrapper.getBoundingClientRect === 'function' ? selectWrapper.getBoundingClientRect() : null;
 
-      for (const popper of poppers) {
-        if (!popper || popper.style?.display === 'none' || popper.style?.visibility === 'hidden' || popper.getAttribute?.('aria-hidden') === 'true') continue;
+      // 选出所有可见的浮层（排除明确 display: none / visibility: hidden）
+      const visiblePoppers = poppers.filter((popper) => {
+        if (!popper) return false;
+        if (popper.hidden || popper.style?.display === 'none' || popper.style?.visibility === 'hidden') return false;
+        const comp = popper.ownerDocument?.defaultView?.getComputedStyle?.(popper);
+        if (comp && (comp.display === 'none' || comp.visibility === 'hidden')) return false;
+        return true;
+      });
 
-        // 若能获取真实屏幕物理尺寸，校验空间吸附几何距离（浮层必定紧贴当前下拉框上方或下方）
+      if (visiblePoppers.length === 1) {
+        return visiblePoppers[0];
+      }
+
+      let bestPopper: HTMLElement | null = null;
+      let minDistance = Infinity;
+
+      for (const popper of visiblePoppers) {
         if (wRect && wRect.width > 0 && wRect.height > 0 && typeof popper.getBoundingClientRect === 'function') {
           const pRect = popper.getBoundingClientRect();
           if (pRect.width > 0 && pRect.height > 0) {
-            const xOverlap = pRect.left < wRect.right + 25 && pRect.right > wRect.left - 25;
-            const yClose = Math.abs(pRect.top - wRect.bottom) < 40 || Math.abs(pRect.bottom - wRect.top) < 40;
-            if (!xOverlap || !yClose) {
-              // 几何位置不吻合，说明属于页面其他下拉框的浮层，坚决排除！
-              continue;
+            // X 轴交叠重合判定（放宽到 60px 容错）
+            const xOverlap = pRect.left < wRect.right + 60 && pRect.right > wRect.left - 60;
+            // Y 轴紧邻（支持下方展开与上方展开，放宽到 80px）
+            const yDist = Math.min(Math.abs(pRect.top - wRect.bottom), Math.abs(pRect.bottom - wRect.top));
+            if (xOverlap && yDist < 80) {
+              if (yDist < minDistance) {
+                minDistance = yDist;
+                bestPopper = popper;
+              }
             }
           }
-        } else if (poppers.length > 1) {
-          // 在无真实坐标且存在多个 popper 时，无法断言哪个属于当前下拉框，坚决不盲目采用
-          continue;
         }
-
-        return popper;
       }
+
+      if (bestPopper) return bestPopper;
+      if (visiblePoppers.length > 0) return visiblePoppers[visiblePoppers.length - 1]; // 后挂载的通常是最新的激活浮层
     }
+
+    if (internalMenu) return internalMenu;
 
     return null;
   }
@@ -1031,14 +1089,51 @@ export class FormScanner {
     return [];
   }
 
-  static extractDropdownOptionsFromDom(element: HTMLElement, selectWrapper: HTMLElement, root: Document = document): FormFieldOption[] {
+  static extractDropdownOptionsFromDom(
+    element: HTMLElement,
+    selectWrapper: HTMLElement,
+    root: Document = document,
+    fieldLabel = ''
+  ): FormFieldOption[] {
     // 0. 优先从 Vue 实例内存模型中直接无损提取选项（0 点击、0 闪烁、0 副作用）
     const vueOpts = this.extractOptionsFromVueInstance(element, selectWrapper);
     if (vueOpts.length > 0) return vueOpts;
 
+    // 1. 查找关联容器（组件内部已挂载菜单或已弹出的浮层）
     const container = this.findAssociatedDropdownContainer(element, selectWrapper, root);
-    if (!container) return [];
-    return this.extractOptionsFromContainer(container);
+    if (container) {
+      const opts = this.extractOptionsFromContainer(container);
+      if (opts.length > 0) return opts;
+    }
+
+    // 2. 关键创新：若当前字段为部门/组织/机构类树形下拉字段，且下拉框尚未展开提取到 options 时，
+    // 自动感知并提取页面上下文中现有的组织架构树（如若依系统左侧的 .head-container .el-tree 或页面上的组织机构树）
+    try {
+      const combinedLabel = (
+        fieldLabel + ' ' +
+        (element.getAttribute('aria-label') || element.getAttribute('placeholder') || selectWrapper.textContent || '')
+      ).toLowerCase();
+      const isOrgOrDept = combinedLabel.includes('部门') || combinedLabel.includes('dept') || combinedLabel.includes('组织') || combinedLabel.includes('机构') || combinedLabel.includes('company') || combinedLabel.includes('org');
+      if (isOrgOrDept) {
+        const docCtx = element.ownerDocument || root;
+        const pageTrees = Array.from(docCtx.querySelectorAll(
+          '.head-container .el-tree, .tree-container .el-tree, .dept-tree, .org-tree, aside .el-tree, [class*="tree"] .el-tree, .el-tree'
+        )) as HTMLElement[];
+        for (const tree of pageTrees) {
+          // 仅采纳有节点且不在当前弹窗内部的组织树（通常为背景组织树）
+          const nodes = Array.from(tree.querySelectorAll('.el-tree-node__content, .el-tree-node__label, [role="treeitem"]')) as HTMLElement[];
+          if (nodes.length > 0) {
+            const orgOpts = this.extractOptionsFromContainer(tree, true); // 允许从侧边栏树提取真实部门
+            if (orgOpts.length > 0) {
+              // 截取前 20 个真实部门作为高质量候选项
+              return orgOpts.slice(0, 20);
+            }
+          }
+        }
+      }
+    } catch {}
+
+    return [];
   }
 
   /** 扫描保持只读，兼容旧入口。 */

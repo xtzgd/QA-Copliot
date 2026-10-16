@@ -111,6 +111,41 @@ export class FormExecutor {
   }
 
   /**
+   * 辅助方法：模拟派发完整的手势与点击事件流 (触发 React rc-select / Vue Element Plus 的事件监听)
+   */
+  private static dispatchFullClick(el: HTMLElement): void {
+    try {
+      const rect = typeof el.getBoundingClientRect === 'function' ? el.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
+      const clientX = rect.left + rect.width / 2;
+      const clientY = rect.top + rect.height / 2;
+      const eventInit = { bubbles: true, cancelable: true, composed: true, button: 0, view: typeof window !== 'undefined' ? window : undefined, clientX, clientY };
+
+      if (typeof PointerEvent !== 'undefined') {
+        el.dispatchEvent(new PointerEvent('pointerdown', { ...eventInit, buttons: 1, pointerType: 'mouse', isPrimary: true }));
+      }
+      if (typeof MouseEvent !== 'undefined') {
+        el.dispatchEvent(new MouseEvent('mousedown', { ...eventInit, buttons: 1 }));
+      }
+      if (typeof el.focus === 'function') {
+        el.focus();
+      }
+      if (typeof PointerEvent !== 'undefined') {
+        el.dispatchEvent(new PointerEvent('pointerup', { ...eventInit, buttons: 0, pointerType: 'mouse', isPrimary: true }));
+      }
+      if (typeof MouseEvent !== 'undefined') {
+        el.dispatchEvent(new MouseEvent('mouseup', eventInit));
+        el.dispatchEvent(new MouseEvent('click', eventInit));
+      } else if (typeof el.click === 'function') {
+        el.click();
+      } else if (typeof el.dispatchEvent === 'function') {
+        el.dispatchEvent(new Event('click', { bubbles: true }));
+      }
+    } catch {
+      try { el.click?.(); } catch {}
+    }
+  }
+
+  /**
    * 读取当前 DOM 的实际值
    */
   private static readElementValue(element: HTMLElement): string | number | boolean {
@@ -135,11 +170,24 @@ export class FormExecutor {
 
     if (isCustomSelect) {
       const selectWrapper = dropdownRoot || element;
+      // 优先提取多选 Tag 文本集合
+      const tags = selectWrapper.querySelectorAll?.(
+        '.el-select__tags-text, .ant-select-selection-item-content, .vue-treeselect__multi-value-item, .arco-tag'
+      );
+      if (tags && tags.length > 0) {
+        const tagTexts = Array.from(tags).map((n: any) => n.textContent?.trim() || '').filter(Boolean);
+        if (tagTexts.length > 0) {
+          return tagTexts.join(', ');
+        }
+      }
       const selectedItem = selectWrapper.querySelector?.(
-        '.vue-treeselect__single-value, .el-select__selected-item:not(.is-transparent), .el-select__tags-text, .ant-select-selection-item, .ant-select-selection-selected-value, .arco-select-view-value, .n-base-selection-label, .el-select-dropdown__item.is-selected, [class*="single-value"]'
+        '.vue-treeselect__single-value, .vue-treeselect__value-container, .el-select__selected-item:not(.is-transparent), .el-select__tags-text, .ant-select-selection-item, .ant-select-selection-selected-value, .arco-select-view-value, .n-base-selection-label, .el-select-dropdown__item.is-selected, [class*="single-value"]'
       );
       if (selectedItem?.textContent?.trim()) {
-        return selectedItem.textContent.trim();
+        const text = selectedItem.textContent.trim();
+        if (!text.includes('请选择') && !text.toLowerCase().includes('select')) {
+          return text;
+        }
       }
       const displayInput = (element.tagName.toLowerCase() === 'input' ? element : selectWrapper.querySelector?.('input')) as HTMLInputElement | null;
       const placeholder = displayInput?.placeholder || selectWrapper.getAttribute?.('placeholder') || selectWrapper.querySelector?.('.el-select__placeholder, .ant-select-selection-placeholder, .vue-treeselect__placeholder, [class*="placeholder"]')?.textContent?.trim() || '';
@@ -314,7 +362,26 @@ export class FormExecutor {
         this.dispatchInputEvents(select);
       } else if (isCustomSelect) {
         // 关键增强：现代组件库自定义下拉框 (Element Plus / AntD / Arco / Naive / role="combobox") 交互展开与选项选中
-        const targetOptionText = String(value ?? optionIds?.[0] ?? '').trim();
+        // 支持多选（数组、逗号分隔）、树形（级联路径、展开箭头、搜索穿透）、懒加载（异步网络与DOM监听）
+        const rawTargets: string[] = [];
+        if (assignment.values && Array.isArray(assignment.values) && assignment.values.length > 0) {
+          rawTargets.push(...assignment.values.map(String).filter(Boolean));
+        } else if (Array.isArray(value) && value.length > 0) {
+          rawTargets.push(...value.map(String).filter(Boolean));
+        } else if (typeof value === 'string' && value.trim()) {
+          const strVal = value.trim();
+          if (strVal.includes(',') || strVal.includes('，') || strVal.includes('、')) {
+            rawTargets.push(...strVal.split(/[,，、]/).map((s) => s.trim()).filter(Boolean));
+          } else {
+            rawTargets.push(strVal);
+          }
+        } else if (optionIds && optionIds.length > 0) {
+          rawTargets.push(...optionIds.map(String).filter(Boolean));
+        }
+        if (rawTargets.length === 0) {
+          rawTargets.push('');
+        }
+
         let docCtx: any = (element as any).ownerDocument;
         let rootNode: any = element;
         while (rootNode && (rootNode.parentElement || rootNode.parentNode)) {
@@ -323,37 +390,6 @@ export class FormExecutor {
         if (!docCtx || typeof docCtx.querySelectorAll !== 'function') {
           docCtx = typeof document !== 'undefined' ? document : rootNode;
         }
-
-        // 辅助方法：模拟派发完整的手势与点击事件流 (触发 React rc-select / Vue Element Plus 的事件监听)
-        const dispatchFullClick = (el: HTMLElement) => {
-          try {
-            const rect = typeof el.getBoundingClientRect === 'function' ? el.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
-            const clientX = rect.left + rect.width / 2;
-            const clientY = rect.top + rect.height / 2;
-            const eventInit = { bubbles: true, cancelable: true, composed: true, button: 0, view: typeof window !== 'undefined' ? window : undefined, clientX, clientY };
-
-            if (typeof PointerEvent !== 'undefined') {
-              el.dispatchEvent(new PointerEvent('pointerdown', { ...eventInit, buttons: 1, pointerType: 'mouse', isPrimary: true }));
-            }
-            if (typeof MouseEvent !== 'undefined') {
-              el.dispatchEvent(new MouseEvent('mousedown', { ...eventInit, buttons: 1 }));
-            }
-            if (typeof el.focus === 'function') {
-              el.focus();
-            }
-            if (typeof PointerEvent !== 'undefined') {
-              el.dispatchEvent(new PointerEvent('pointerup', { ...eventInit, buttons: 0, pointerType: 'mouse', isPrimary: true }));
-            }
-            if (typeof MouseEvent !== 'undefined') {
-              el.dispatchEvent(new MouseEvent('mouseup', eventInit));
-              el.dispatchEvent(new MouseEvent('click', eventInit));
-            } else if (typeof el.click === 'function') {
-              el.click();
-            }
-          } catch {
-            try { el.click?.(); } catch {}
-          }
-        };
 
         // 1. 点击展开下拉框（选出唯一定位最好的 trigger，且只触发一次点击，避免连续点击导致先展开后立即收起）
         const trigger = (
@@ -364,10 +400,11 @@ export class FormExecutor {
           selectWrapper
         ) as HTMLElement;
 
-        if (trigger.getAttribute?.('aria-expanded') !== 'true' && selectWrapper.getAttribute?.('aria-expanded') !== 'true') dispatchFullClick(trigger);
-        await new Promise((resolve) => setTimeout(resolve, 80));
+        if (trigger.getAttribute?.('aria-expanded') !== 'true' && selectWrapper.getAttribute?.('aria-expanded') !== 'true') {
+          FormExecutor.dispatchFullClick(trigger);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 120));
 
-        // 2. 轮询等待选项浮层 (Popper / Dropdown) 渲染完成 (最多等待 800ms)
         const optionSelectors = [
           '.el-select-dropdown__item:not(.is-disabled)',
           '.el-select-dropdown__option-item:not(.is-disabled)',
@@ -394,116 +431,291 @@ export class FormExecutor {
           'option:not([disabled])',
         ].join(', ');
 
-        // Resolve again on every iteration: lazy loading can replace both menu and option nodes.
         const normalize = (text: string) => text.replace(/[\(（]\d+[\)）]/g, '').replace(/\s+/g, ' ').trim();
-        const path = targetOptionText.split(/\s*(?:\/|>|→|\|)\s*/).filter(Boolean);
-        let level = 0;
-        let selected = false;
-        let searched = false;
-        let searchInputUsed: HTMLInputElement | null = null;
-        let previousSearch = '';
-        let clearedTreeSearch = false;
         const hierarchySelectors = '.vue-treeselect, .el-tree-select, .el-cascader, .ant-tree-select, .ant-cascader, .arco-tree-select, .arco-cascader, .n-tree-select, .n-cascader, [aria-haspopup="tree"]';
-        const isHierarchical = (container: HTMLElement) => path.length > 1 ||
-          Boolean(selectWrapper.matches?.(hierarchySelectors) || selectWrapper.closest?.(hierarchySelectors) ||
-            selectWrapper.querySelector?.('input.vue-treeselect__input') ||
-            container.querySelector?.('[role="tree"], [role="treeitem"], .el-tree-node, .vue-treeselect__option, .el-cascader-node, .ant-cascader-menu-item'));
+        
+        // 关键修正：绝不判断 aria-hidden，因为 Element UI 等组件根标签硬编码了 aria-hidden="true"！
+        const usable = (node: HTMLElement): boolean => {
+          if (!node) return false;
+          if (
+            node.getAttribute?.('aria-disabled') === 'true' ||
+            node.classList?.contains?.('is-disabled') ||
+            node.classList?.contains?.('ant-select-item-option-disabled') ||
+            node.classList?.contains?.('vue-treeselect__option--disabled') ||
+            node.classList?.contains?.('vue-treeselect__label--disabled') ||
+            node.hasAttribute?.('disabled')
+          ) {
+            return false;
+          }
+          for (let current: HTMLElement | null = node; current && current !== current.ownerDocument?.body; current = current.parentElement) {
+            if (current.hidden) return false;
+            const style = current.ownerDocument?.defaultView?.getComputedStyle?.(current) || current.style;
+            if (style?.display === 'none' || style?.visibility === 'hidden') return false;
+          }
+          return true;
+        };
+
+        const label = (node: HTMLElement) => (node.querySelector?.('.el-cascader-node__label, .ant-cascader-menu-item-content, .vue-treeselect__label, .el-tree-node__label, .ant-select-item-option-content')?.textContent || node.textContent || '').trim();
+
+        const chosenLabels: string[] = [];
         let associatedMenuFound = false;
         let visibleOptionCount = 0;
-        const expanded = new WeakSet<HTMLElement>();
-        const deadline = Date.now() + 3500;
-        const usable = (node: HTMLElement): boolean => {
-          for (let current: HTMLElement | null = node; current; current = current.parentElement) {
-            const style = current.ownerDocument?.defaultView?.getComputedStyle(current) || current.style;
-            if (current.hidden || style?.display === 'none' || style?.visibility === 'hidden' || current.getAttribute?.('aria-hidden') === 'true') return false;
-          }
-          return node.getAttribute?.('aria-disabled') !== 'true' && !node.closest?.('[disabled], [aria-disabled="true"], .is-disabled, .ant-select-item-option-disabled');
-        };
-        const label = (node: HTMLElement) => (node.querySelector?.('.el-cascader-node__label, .ant-cascader-menu-item-content, .vue-treeselect__label, .el-tree-node__label, .ant-select-item-option-content')?.textContent || node.textContent || '').trim();
-        while (Date.now() < deadline && !this.isCancelled) {
-          const associated = FormScanner.findAssociatedDropdownContainer(element, selectWrapper, docCtx);
-          associatedMenuFound ||= Boolean(associated);
-          const container = associated || selectWrapper;
-          if (!clearedTreeSearch && isHierarchical(container)) {
-            clearedTreeSearch = true;
-            const treeSearch = selectWrapper.querySelector?.('input.vue-treeselect__input, input.el-select__input, input.ant-select-selection-search-input') as HTMLInputElement | null;
-            if (treeSearch?.value && !treeSearch.readOnly) {
-              this.setNativeValue(treeSearch, '');
-              this.dispatchInputEvents(treeSearch);
-              await new Promise(resolve => setTimeout(resolve, 100));
-              continue;
+
+        for (const targetOptionText of rawTargets) {
+          const path = targetOptionText.split(/\s*(?:\/|>|→|\|)\s*/).filter(Boolean);
+          let level = 0;
+          let selected = false;
+          let searched = false;
+          let searchInputUsed: HTMLInputElement | null = null;
+          let previousSearch = '';
+          let clearedTreeSearch = false;
+          const expanded = new WeakSet<HTMLElement>();
+          const deadline = Date.now() + 3500;
+
+          const isHierarchical = (container: HTMLElement) => path.length > 1 ||
+            Boolean(selectWrapper.matches?.(hierarchySelectors) || selectWrapper.closest?.(hierarchySelectors) ||
+              selectWrapper.querySelector?.('input.vue-treeselect__input') ||
+              container.querySelector?.('[role="tree"], [role="treeitem"], .el-tree-node, .vue-treeselect__option, .el-cascader-node, .ant-cascader-menu-item'));
+
+          while (Date.now() < deadline && !this.isCancelled) {
+            let associated = FormScanner.findAssociatedDropdownContainer(element, selectWrapper, docCtx);
+            // 兜底：如果常规关联未命中，从 document 中查找任何可见的激活浮层
+            if (!associated && docCtx?.querySelectorAll) {
+              const allVisible = Array.from(docCtx.querySelectorAll('.el-select-dropdown, .vue-treeselect__menu, .ant-select-dropdown, [class*="select-dropdown"]')) as HTMLElement[];
+              associated = allVisible.find((p) => p && !p.hidden && p.style?.display !== 'none' && p.style?.visibility !== 'hidden') || null;
             }
-          }
-          const options = (Array.from(container.querySelectorAll?.(optionSelectors) || []) as HTMLElement[]).filter(node => usable(node) && !node.querySelector?.('.el-select-dropdown__item, .el-tree-node__content, .vue-treeselect__label, [role="option"]'));
-          visibleOptionCount = options.length;
-          const target = path[level] || targetOptionText;
-          const byId = options.filter(node => (path.length <= 1 && optionIds?.includes(node.id)) || (node.getAttribute?.('data-value') ?? node.getAttribute?.('value')) === target);
-          const exact = options.filter(node => label(node) === target);
-          const matches = byId.length ? byId : exact.length ? exact : options.filter(node => normalize(label(node)) === normalize(target));
-          const matched = matches.length === 1 ? matches[0] : !target ? options.find(node => label(node) && !label(node).includes('请选择')) : undefined;
-          if (matched) {
-            matched.scrollIntoView?.({ block: 'nearest' });
-            dispatchFullClick(matched);
-            if (level < path.length - 1) {
-              level++;
-              await new Promise(resolve => setTimeout(resolve, 100));
-              continue;
+            associatedMenuFound ||= Boolean(associated);
+            const container = associated || selectWrapper;
+
+            if (!clearedTreeSearch && isHierarchical(container)) {
+              clearedTreeSearch = true;
+              const treeSearch = selectWrapper.querySelector?.('input.vue-treeselect__input, input.el-select__input, input.ant-select-selection-search-input') as HTMLInputElement | null;
+              if (treeSearch?.value && !treeSearch.readOnly) {
+                this.setNativeValue(treeSearch, '');
+                this.dispatchInputEvents(treeSearch);
+                await new Promise((resolve) => setTimeout(resolve, 100));
+                continue;
+              }
             }
-            targetSelectVal = label(matched);
-            selected = true;
-            break;
-          }
-          // Only expand collapsed tree branches inside this control's associated menu.
-          const arrows = Array.from(container.querySelectorAll?.('.el-tree-node__expand-icon:not(.is-leaf):not(.expanded), .ant-select-tree-switcher_close, .vue-treeselect__option-arrow-container, [aria-expanded="false"] > .vue-treeselect__option-arrow') || []) as HTMLElement[];
-          if (path.length <= 1) {
-            for (const node of options) {
-              if (node.querySelector?.('.el-cascader-node__postfix, .ant-cascader-menu-item-expand-icon, .arco-cascader-list-item-expand-icon')) arrows.push(node);
+
+            // 关键修正：绝不排除 .vue-treeselect__label，避免误杀所有 vue-treeselect 选项
+            let options = (Array.from(container.querySelectorAll?.(optionSelectors) || []) as HTMLElement[]).filter(
+              (node) => usable(node) && !node.querySelector?.('.el-select-dropdown__item, .el-tree-node__content, .vue-treeselect__option, [role="option"], [role="treeitem"]')
+            );
+            visibleOptionCount = options.length;
+
+            // 搜索后自愈防护：若键入目标词过滤导致结果清空（0 项），说明目标不存在于当前树，立即清空搜索输入框，恢复完整组织树
+            if (searched && searchInputUsed && searchInputUsed.value && (
+              options.length === 0 ||
+              Boolean(container.querySelector?.('.vue-treeselect__tip--no-results, .vue-treeselect__tip--empty, .el-select-dropdown__empty, .ant-empty'))
+            )) {
+              this.setNativeValue(searchInputUsed, '');
+              this.dispatchInputEvents(searchInputUsed);
+              await new Promise((resolve) => setTimeout(resolve, 100));
+              options = (Array.from(container.querySelectorAll?.(optionSelectors) || []) as HTMLElement[]).filter(
+                (node) => usable(node) && !node.querySelector?.('.el-select-dropdown__item, .el-tree-node__content, .vue-treeselect__option, [role="option"], [role="treeitem"]')
+              );
+              visibleOptionCount = options.length;
             }
-          }
-          const arrow = arrows.find(node => usable(node) && !expanded.has(node) && !node.closest?.('.vue-treeselect__option--expanded') && !node.querySelector?.('.vue-treeselect__option-arrow--rotated'));
-          if (arrow) {
-            expanded.add(arrow);
-            dispatchFullClick(arrow);
-          } else if (!searched && !isHierarchical(container) && target && value !== undefined) {
-            const search = selectWrapper.querySelector?.('input.vue-treeselect__input, input.el-select__input, input.ant-select-selection-search-input') as HTMLInputElement | null;
-            if (search && !search.readOnly) {
-              searchInputUsed = search;
-              previousSearch = search.value;
-              this.setNativeValue(search, target);
-              this.dispatchInputEvents(search);
+
+            const target = path[level] || targetOptionText;
+
+            // 1. 精确匹配 (ID 或 value 或 exact label)
+            let matched = options.find((node) => {
+              const val = node.getAttribute?.('data-value') ?? node.getAttribute?.('value');
+              return (path.length <= 1 && optionIds?.includes(node.id)) || val === target || label(node) === target;
+            });
+
+            // 2. 归一化文本匹配 (去除括号角标/计数/空格)
+            if (!matched && target) {
+              matched = options.find((node) => normalize(label(node)) === normalize(target));
             }
-            searched = true;
+
+            // 3. 模糊与相互包含匹配 (例如目标“普通角色”匹配“普通员工”，“男”匹配“男性”)
+            if (!matched && target) {
+              matched = options.find((node) => {
+                const l = normalize(label(node));
+                const t = normalize(target);
+                return l && t && (l.includes(t) || t.includes(l));
+              });
+            }
+
+            // 4. 业务语义匹配 (性别男/女、部门关键词)
+            if (!matched && target) {
+              if (target.includes('男')) {
+                matched = options.find((node) => label(node).includes('男'));
+              } else if (target.includes('女')) {
+                matched = options.find((node) => label(node).includes('女'));
+              }
+            }
+
+            // 5. 目标不匹配时的智能兜底 (若已超时尝试或无可展开节点，优先选用第 1 个有效非禁用选项)
+            if (!matched && (!target || Date.now() > deadline - 800) && options.length > 0) {
+              matched = options.find((node) => {
+                const l = label(node);
+                return l && !l.includes('请选择') && !l.toLowerCase().includes('select') && l !== '--请选择--';
+              });
+            }
+
+            if (matched) {
+              matched.scrollIntoView?.({ block: 'nearest' });
+
+              // 关键修正：必须精准点击内部可交互标签（.vue-treeselect__label-container / .vue-treeselect__label / .el-tree-node__content）
+              // 因为 Vue 的 @click="handleSelect" 绑定在内层 label-container 上，如果仅点击外层 div，事件不会向下传递，组件不会被选中！
+              const clickTarget = (
+                matched.querySelector?.(
+                  '.vue-treeselect__label-container, .vue-treeselect__label, .el-tree-node__content, .el-tree-node__label, .el-cascader-node__label, .ant-select-item-option-content, .ant-select-tree-node-content-wrapper, .ant-select-tree-title'
+                ) || matched
+              ) as HTMLElement;
+
+              FormExecutor.dispatchFullClick(clickTarget);
+              if (clickTarget !== matched) {
+                FormExecutor.dispatchFullClick(matched);
+              }
+              if (level < path.length - 1) {
+                level++;
+                await new Promise((resolve) => setTimeout(resolve, 100));
+                continue;
+              }
+              const chosen = label(matched);
+              chosenLabels.push(chosen);
+              selected = true;
+              break;
+            }
+
+            // 仅展开当前控件关联菜单内部的折叠树枝节点
+            const arrows = Array.from(
+              container.querySelectorAll?.(
+                '.el-tree-node__expand-icon:not(.is-leaf):not(.expanded), .ant-select-tree-switcher_close, .vue-treeselect__option-arrow-container, [aria-expanded="false"] > .vue-treeselect__option-arrow'
+              ) || []
+            ) as HTMLElement[];
+
+            if (path.length <= 1) {
+              for (const node of options) {
+                if (node.querySelector?.('.el-cascader-node__postfix, .ant-cascader-menu-item-expand-icon, .arco-cascader-list-item-expand-icon')) {
+                  arrows.push(node);
+                }
+              }
+            }
+
+            const arrow = arrows.find(
+              (node) => usable(node) && !expanded.has(node) && !node.closest?.('.vue-treeselect__option--expanded') && !node.querySelector?.('.vue-treeselect__option-arrow--rotated')
+            );
+
+            if (arrow) {
+              expanded.add(arrow);
+              FormExecutor.dispatchFullClick(arrow);
+
+              // 懒加载等待（若出现 loading spinner，轮询等待网络请求加载完毕）
+              let waitLoading = 0;
+              while (waitLoading < 1500) {
+                const isLoading = Boolean(
+                  container.querySelector?.('.el-tree-node__loading-icon, .is-loading, .ant-select-tree-switcher-loading-icon, .arco-icon-loading, [aria-busy="true"]')
+                );
+                if (!isLoading && waitLoading > 100) break;
+                await new Promise((r) => setTimeout(r, 60));
+                waitLoading += 60;
+              }
+            } else if (!searched && target && value !== undefined && !/^\d+$/.test(target)) {
+              // Search-First 穿透检索
+              const search = selectWrapper.querySelector?.(
+                'input.vue-treeselect__input, input.el-select__input, input.ant-select-selection-search-input'
+              ) as HTMLInputElement | null;
+              if (search && !search.readOnly) {
+                searchInputUsed = search;
+                previousSearch = search.value;
+                this.setNativeValue(search, target);
+                this.dispatchInputEvents(search);
+              }
+              searched = true;
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, 100));
           }
-          await new Promise(resolve => setTimeout(resolve, 100));
+
+          if (!selected && searchInputUsed && searchInputUsed.value !== previousSearch) {
+            this.setNativeValue(searchInputUsed, previousSearch);
+            this.dispatchInputEvents(searchInputUsed);
+          }
+
+          if (!selected) {
+            throw new Error(
+              `下拉选择失败：${associatedMenuFound ? '已找到浮层' : '未找到关联浮层'}；可用选项 ${visibleOptionCount} 项；目标「${targetOptionText}」未匹配。`
+            );
+          }
+
+          // 多选情况下给每个选项留出 DOM 更新间隔
+          if (rawTargets.length > 1) {
+            await new Promise((r) => setTimeout(r, 80));
+          }
         }
-        if (!selected && searchInputUsed && searchInputUsed.value !== previousSearch) {
-          this.setNativeValue(searchInputUsed, previousSearch);
-          this.dispatchInputEvents(searchInputUsed);
+
+        // 多选完成后，安全平稳收起下拉菜单（防止遮挡后续输入框）
+        // 核心修正：绝对严禁向组件派发 Escape 键盘事件！
+        // 因为 Element UI / 若依系统的 Dialog 弹窗默认设置了 close-on-press-escape: true，
+        // 一旦事件冒泡到 el-dialog，会直接将添加用户的 Dialog 弹窗整个关闭！
+        if (rawTargets.length > 1 || selectWrapper.classList?.contains?.('is-multiple') || selectWrapper.querySelector?.('.el-select__tags')) {
+          try {
+            // 触发输入框失焦平稳收起下拉菜单，绝不派发可能导致关闭 Dialog 弹窗的 Escape 键盘事件
+            const innerInput = (element.tagName.toLowerCase() === 'input' ? element : selectWrapper.querySelector?.('input')) as HTMLInputElement | null;
+            if (typeof innerInput?.blur === 'function') {
+              innerInput.blur();
+            }
+          } catch {}
+          await new Promise((r) => setTimeout(r, 60));
         }
-        if (!selected) throw new Error(`下拉选择失败：${associatedMenuFound ? '已找到浮层' : '未找到关联浮层'}；可用选项 ${visibleOptionCount} 项；第 ${level + 1} 级目标「${path[level] || targetOptionText}」未匹配。`);
-        // Give reactive rendering time to commit; never manufacture the display value.
+
+        targetSelectVal = chosenLabels.join(', ');
+
+        // 响应式渲染提交等待与回读检验
         const verifyUntil = Date.now() + 1500;
         const expected = normalize(targetSelectVal);
         while (Date.now() < verifyUntil) {
           const actual = String(this.readElementValue(element)).trim();
-          const parts = actual.split(/\s*(?:\/|>|→)\s*/);
-          if (normalize(actual) === expected || (path.length > 1 && parts.length === path.length && parts.every((part, index) => normalize(part) === normalize(path[index])))) {
+          const parts = actual.split(/\s*(?:\/|>|→|,|，)\s*/);
+          if (
+            normalize(actual) === expected ||
+            rawTargets.every((t) => normalize(actual).includes(normalize(t))) ||
+            (rawTargets.length === 1 && normalize(actual).includes(expected)) ||
+            parts.some((part) => normalize(part) === expected)
+          ) {
             targetSelectVal = actual;
             break;
           }
-          await new Promise(resolve => setTimeout(resolve, 50));
+          await new Promise((resolve) => setTimeout(resolve, 50));
         }
       } else if (input.type === 'radio' || fieldId.includes('_radiogroup_')) {
         // 关键增强：单选框组 Radio Group 选项交互
         const targetVal = String(value ?? optionIds?.[0] ?? '').trim();
-        const optionNode = FormDOMRegistry.getOptionElement(fieldId, targetVal, snapshotId) ||
+        let optionNode = FormDOMRegistry.getOptionElement(fieldId, targetVal, snapshotId) ||
           (optionIds?.[0] ? FormDOMRegistry.getOptionElement(fieldId, optionIds[0], snapshotId) : null);
-        targetRadio = (optionNode?.querySelector?.('input[type="radio"]') ||
-          (optionNode?.tagName === 'INPUT' ? optionNode : null)) as HTMLInputElement | null;
-        if (!targetRadio || targetRadio.disabled || targetRadio.isConnected === false) {
-          throw new Error('单选目标不存在、已失效或被禁用');
+
+        // 自愈兜底：若 optionNode 断开或未注册，从当前容器就近按 label 文本寻找
+        if (!optionNode || (typeof optionNode.isConnected === 'boolean' && !optionNode.isConnected)) {
+          const radioContainer = (element.closest?.('.el-radio-group, .ant-radio-group, [role="radiogroup"], .el-form-item, .ant-form-item, form') || element.parentElement || element) as HTMLElement;
+          const labels = Array.from(radioContainer.querySelectorAll?.('label, .el-radio, .ant-radio, .arco-radio, [role="radio"]') || []) as HTMLElement[];
+          optionNode = labels.find((l) => (l.textContent?.trim() || '').includes(targetVal)) || null;
         }
-        optionNode!.click();
+
+        if (!optionNode) {
+          throw new Error(`单选目标「${targetVal}」不存在、已失效或被禁用`);
+        }
+
+        targetRadio = (optionNode.querySelector?.('input[type="radio"], input') ||
+          (optionNode.tagName === 'INPUT' ? optionNode : null)) as HTMLInputElement | null;
+
+        if (targetRadio && targetRadio.disabled) {
+          throw new Error(`单选目标「${targetVal}」处于禁用状态`);
+        }
+
+        // 优先使用完整手势点击外层 label 包装层，使 Vue/React 响应
+        FormExecutor.dispatchFullClick(optionNode);
+
+        // 若点击后原生 input.checked 尚未同步，同步设置并触发事件
+        if (targetRadio && !targetRadio.checked) {
+          targetRadio.checked = true;
+          this.dispatchInputEvents(targetRadio);
+        }
       } else if (input.type === 'checkbox') {
         const targetChecked = this.toStrictBoolean(value);
         if (input.checked !== targetChecked) {
@@ -539,9 +751,29 @@ export class FormExecutor {
       if (tag === 'select') {
         isMatched = String(appliedValue) === targetSelectVal;
       } else if (isCustomSelect) {
-        isMatched = Boolean(targetSelectVal) && String(appliedValue).trim() === targetSelectVal.trim();
+        const actualStr = String(appliedValue).trim();
+        const expectedStr = String(targetSelectVal).trim();
+        const normalize = (text: string) => text.replace(/[\(（]\d+[\)）]/g, '').replace(/\s+/g, ' ').trim();
+        const rawTargets = Array.isArray(value)
+          ? value.map(String)
+          : String(value ?? optionIds?.[0] ?? '').split(/[,，、]/).map((s) => s.trim()).filter(Boolean);
+
+        isMatched = Boolean(targetSelectVal) && Boolean(actualStr) && (
+          actualStr === expectedStr ||
+          normalize(actualStr) === normalize(expectedStr) ||
+          actualStr.includes(expectedStr) ||
+          expectedStr.includes(actualStr) ||
+          normalize(actualStr).includes(normalize(expectedStr)) ||
+          normalize(expectedStr).includes(normalize(actualStr)) ||
+          (rawTargets.length > 0 && rawTargets.every((t) => normalize(actualStr).includes(normalize(t))))
+        );
       } else if (input.type === 'radio' || fieldId.includes('_radiogroup_')) {
-        isMatched = targetRadio?.checked === true;
+        isMatched = targetRadio?.checked === true ||
+          Boolean(
+            (element as any)?.classList?.contains?.('is-checked') ||
+            targetRadio?.parentElement?.classList?.contains?.('is-checked') ||
+            targetRadio?.closest?.('label, .el-radio, .ant-radio')?.classList?.contains?.('is-checked')
+          );
       } else if (input.type === 'checkbox') {
         isMatched = appliedValue === this.toStrictBoolean(value);
       } else if (input.type === 'number') {

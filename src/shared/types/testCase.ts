@@ -49,6 +49,7 @@ export interface WebFrameObservation {
 export type BrowserAgentPlan =
   | { action: 'tap' | 'input'; elementId: string; value?: string; reason: string }
   | { action: 'scroll'; frameId: number; direction: 'up' | 'down' | 'left' | 'right'; distance: number; reason: string }
+  | { action: 'navigate'; url: string; reason: string }
   | { action: 'finished'; reason: string }
   | { action: 'assertion'; passed: boolean; reason: string };
 

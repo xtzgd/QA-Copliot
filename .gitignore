@@ -17,3 +17,8 @@ node_modules/
 # OS and test artifacts
 .DS_Store
 coverage/
+
+# Archives and temporary artifacts
+*.zip
+scratch_images/
+md-to-word/

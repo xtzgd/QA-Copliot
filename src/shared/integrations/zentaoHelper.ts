@@ -100,6 +100,24 @@ export function isSameZentaoSite(urlA?: string, urlB?: string): boolean {
   }
 }
 
+/**
+ * 构造禅道原生提 Bug 页面的跳转 URL
+ * 兼容经典路由模式与常见 PATH_INFO 路由模式
+ * 典型格式：/bug-create-{productId}[-{branchId}-{projectId}].html
+ */
+export function getZentaoBugCreatePageUrl(baseUrl: string, productId?: number, projectId?: number): string {
+  const norm = normalizeZentaoUrl(baseUrl);
+  const cleanBase = norm.isValid ? norm.baseUrl : baseUrl.trim().replace(/\/+$/, '');
+  const prod = productId && productId > 0 ? productId : 0;
+  if (prod > 0) {
+    if (projectId && projectId > 0) {
+      return `${cleanBase}/bug-create-${prod}-0-${projectId}.html`;
+    }
+    return `${cleanBase}/bug-create-${prod}.html`;
+  }
+  return `${cleanBase}/index.php?m=bug&f=create`;
+}
+
 export interface DetectedZentaoInfo {
   found: boolean;
   siteUrl?: string;

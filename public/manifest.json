@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "minimum_chrome_version": "116",
   "name": "QA Copilot",
-  "version": "1.0.9",
+  "version": "1.1.0",
   "description": "QA Copilot - Web QA 工程师的智能测试助手，自动记录操作、异常与一键生成高质量 Bug 报告",
   "icons": {
     "16": "icons/icon-16.png",

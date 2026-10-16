@@ -27,7 +27,10 @@ import {
   WebFrameObservation,
   WebObservationElement,
 } from '../shared/types/testCase';
-export { taskCoordinator };
+import { splitNaturalLanguageInstruction, ParsedAiStep } from '../shared/utils/taskParser';
+export { taskCoordinator, splitNaturalLanguageInstruction };
+export type { ParsedAiStep };
+import { QuickLoginConfig } from '../shared/types/quickLogin';
 
 console.log('[QA Copilot SW] Service Worker 启动');
 
@@ -69,7 +72,51 @@ function activePageError(url?: string): string {
   if (!isCapturablePageUrl(url)) {
     return '当前是 Chrome 内部页面，无法采集。请切换到 http/https 被测页面后再操作';
   }
-  return '当前标签页不是本次测试绑定的页面，请切回开始测试时的标签页';
+  return '未检测到被测系统所在标签页，请切回或打开被测系统页面后再操作';
+}
+
+let activeSessionAllowedOrigins: Set<string> = new Set();
+
+async function refreshAllowedOrigins(session?: TestSession | null): Promise<Set<string>> {
+  const origins = new Set<string>();
+  if (session?.initialUrl) {
+    try {
+      origins.add(new URL(session.initialUrl).origin);
+    } catch {}
+  }
+  if (session?.currentUrl) {
+    try {
+      origins.add(new URL(session.currentUrl).origin);
+    } catch {}
+  }
+  try {
+    const res = await chrome.storage.local.get({ quickLoginConfig: null });
+    const config = res.quickLoginConfig as QuickLoginConfig | null;
+    if (config?.projects) {
+      for (const p of config.projects) {
+        for (const e of p.environments || []) {
+          if (e.url) {
+            try {
+              origins.add(new URL(e.url).origin);
+            } catch {}
+          }
+        }
+      }
+    }
+  } catch {}
+  activeSessionAllowedOrigins = origins;
+  return origins;
+}
+
+function isTabAllowedForSession(tab?: chrome.tabs.Tab, activeSession?: TestSession | null): boolean {
+  if (!tab?.url || !isCapturablePageUrl(tab.url)) return false;
+  if (!activeSession) return false;
+  if (activeSession.tabId !== undefined && tab.id === activeSession.tabId) return true;
+  try {
+    const origin = new URL(tab.url).origin;
+    if (activeSessionAllowedOrigins.has(origin)) return true;
+  } catch {}
+  return false;
 }
 
 async function ensurePageCaptureReady(tabId: number): Promise<void> {
@@ -164,16 +211,18 @@ function validateRunSuite(suite: ImportedTestSuite): string | null {
 
 async function configureAgentProvider(): Promise<void> {
   const values = await chrome.storage.local.get([
-    'aiProviderMode', 'aiBaseUrl', 'aiApiKey', 'aiModel', 'aiRemoteEndpoint', 'enterpriseGatewayUrl',
+    'aiProviderMode', 'aiBaseUrl', 'aiApiKey', 'aiModel', 'aiRemoteEndpoint', 'enterpriseGatewayUrl', 'aiTimeoutSeconds',
   ]);
   const mode = (values.aiProviderMode || 'heuristic') as AIProviderMode;
   if (mode !== 'remote') throw new Error('自然语言自动化需要先在「设置 → AI」中启用并配置远程大模型');
   const baseUrl = values.aiBaseUrl || values.aiRemoteEndpoint || values.enterpriseGatewayUrl;
   if (typeof baseUrl !== 'string' || !baseUrl.trim()) throw new Error('请先在「设置 → AI」填写大模型 API 地址');
+  const timeoutSeconds = Number(values.aiTimeoutSeconds) || 60;
   aiProviderService.configure(mode, {
     baseUrl,
     apiKey: values.aiApiKey,
     model: values.aiModel,
+    timeoutMs: Math.max(10, Math.min(300, timeoutSeconds)) * 1000,
   });
 }
 
@@ -230,7 +279,7 @@ async function collectAgentObservations(tabId: number): Promise<WebFrameObservat
 }
 
 function createAgentEvent(
-  action: Exclude<BrowserAgentPlan, { action: 'finished' | 'assertion' }>,
+  action: Exclude<BrowserAgentPlan, { action: 'finished' | 'assertion' | 'navigate' }>,
   target: WebObservationElement | undefined,
   frame: WebFrameObservation | undefined,
   pageUrl: string,
@@ -325,6 +374,26 @@ async function dispatchAgentEvent(tabId: number, runId: string, event: QAEvent):
   }
 }
 
+function notifyTabHud(
+  tabId: number,
+  payload: {
+    status: 'running' | 'passed' | 'failed' | 'cancelled';
+    title?: string;
+    stepTitle?: string;
+    stepIndex?: number;
+    totalSteps?: number;
+    detail?: string;
+    reason?: string;
+    error?: string;
+  }
+) {
+  try {
+    if (typeof chrome !== 'undefined' && chrome.tabs?.sendMessage && tabId) {
+      chrome.tabs.sendMessage(tabId, { type: 'UPDATE_TEST_HUD', payload }).catch(() => {});
+    }
+  } catch {}
+}
+
 async function executeAiInstruction(
   tabId: number,
   runId: string,
@@ -332,14 +401,18 @@ async function executeAiInstruction(
   stepIndex: number,
   history: string[],
   assertMode = false,
+  stepTitle?: string,
+  totalSteps?: number,
 ): Promise<{ verified: boolean; reason?: string; actionsSent: boolean }> {
   let actionsSent = false;
   for (let turn = 0; ; turn += 1) {
     if (activeAgentRunId !== runId) throw new Error('任务已取消');
+    const readingDetail = assertMode ? `第 ${turn + 1} 轮：正在读取页面并准备断言` : `第 ${turn + 1} 轮：正在读取页面状态`;
     taskCoordinator.updateStep(runId, stepIndex, {
       status: 'running',
-      detail: assertMode ? `第 ${turn + 1} 轮：正在读取页面并准备断言` : `第 ${turn + 1} 轮：正在读取页面状态`,
+      detail: readingDetail,
     });
+    notifyTabHud(tabId, { status: 'running', stepIndex, totalSteps, stepTitle, detail: readingDetail });
     const observations = await collectAgentObservations(tabId);
     let screenshotUrl: string | undefined;
     try {
@@ -360,12 +433,14 @@ async function executeAiInstruction(
       console.warn('[QA Copilot Agent] 视口截图采集跳过，继续纯 DOM 模式:', e);
     }
 
+    const planningDetail = assertMode
+      ? `第 ${turn + 1} 轮：页面${screenshotUrl ? '与视口画面' : ''}已读取，正在请求 AI 核对断言`
+      : `第 ${turn + 1} 轮：页面${screenshotUrl ? '与视口画面' : ''}已读取，等待 AI 规划动作...`;
     taskCoordinator.updateStep(runId, stepIndex, {
       status: 'running',
-      detail: assertMode
-        ? `第 ${turn + 1} 轮：页面${screenshotUrl ? '与视口画面' : ''}已读取，正在请求 AI 核对断言`
-        : `第 ${turn + 1} 轮：页面${screenshotUrl ? '与视口画面' : ''}已读取，等待 AI 规划动作（单次请求最多 35 秒）`,
+      detail: planningDetail,
     });
+    notifyTabHud(tabId, { status: 'running', stepIndex, totalSteps, stepTitle, detail: planningDetail });
     const plan = await aiProviderService.planBrowserAction({
       instruction,
       observations,
@@ -379,6 +454,7 @@ async function executeAiInstruction(
       history.push(`断言${plan.passed ? '通过' : '失败'}：${plan.reason}`);
       if (!plan.passed) throw new Error(`断言未通过：${plan.reason || instruction}`);
       taskCoordinator.updateStep(runId, stepIndex, { detail: `断言通过：${plan.reason}` });
+      notifyTabHud(tabId, { status: 'running', stepIndex, totalSteps, stepTitle, detail: `断言通过：${plan.reason}` });
       return { verified: true, reason: plan.reason, actionsSent };
     }
     if (assertMode) throw new Error('大模型没有返回断言结果');
@@ -386,6 +462,29 @@ async function executeAiInstruction(
       history.push(`AI 判断目标完成：${plan.reason}`);
       taskCoordinator.updateStep(runId, stepIndex, { detail: `AI 判断目标已完成：${plan.reason || '未提供说明'}（未执行独立断言）` });
       return { verified: false, reason: plan.reason, actionsSent };
+    }
+
+    if (plan.action === 'navigate') {
+      const targetUrl = plan.url;
+      const navDetail = `第 ${turn + 1} 轮：正在跨系统导航至 ${targetUrl}`;
+      history.push(`跨系统导航至：${targetUrl}`);
+      taskCoordinator.updateStep(runId, stepIndex, { detail: navDetail, actionSent: true });
+      notifyTabHud(tabId, { status: 'running', stepIndex, totalSteps, stepTitle, detail: navDetail });
+
+      expectedReplayNavigation = { tabId, expiresAt: Date.now() + 25_000 };
+      await navigateReplayTab(tabId, targetUrl);
+      expectedReplayNavigation = null;
+
+      await waitForTabNavigationComplete(tabId);
+      await ensureReplayContentReady(tabId);
+      if (!cdpInputSession.isAttached) {
+        try { await cdpInputSession.attach(tabId); } catch { /* DOM fallback remains available */ }
+      }
+      actionsSent = true;
+      taskCoordinator.updateStep(runId, stepIndex, { detail: `已跳转至 ${targetUrl}，新系统已就绪，继续执行后续操作`, actionSent: true });
+      notifyTabHud(tabId, { status: 'running', stepIndex, totalSteps, stepTitle, detail: `已进入新系统，准备下一步操作` });
+      await waitForAgentDelay(runId, 1000);
+      continue;
     }
 
     let target: WebObservationElement | undefined;
@@ -400,13 +499,15 @@ async function executeAiInstruction(
       frame = observations.find((item) => item.frameId === plan.frameId);
       if (!frame) throw new Error('AI 选择了本轮观察列表之外的 frame，本步骤已停止');
     }
-    const event = createAgentEvent(plan as Exclude<BrowserAgentPlan, { action: 'finished' | 'assertion' }>, target, frame, frame?.frameUrl || (await chrome.tabs.get(tabId)).url || '');
+    const event = createAgentEvent(plan as Exclude<BrowserAgentPlan, { action: 'finished' | 'assertion' | 'navigate' }>, target, frame, frame?.frameUrl || (await chrome.tabs.get(tabId)).url || '');
     taskCoordinator.updateStep(runId, stepIndex, { detail: `第 ${turn + 1} 轮：正在${event.description}` });
+    notifyTabHud(tabId, { status: 'running', stepIndex, totalSteps, stepTitle, detail: `正在${event.description}` });
     await dispatchAgentEvent(tabId, runId, event);
     const actionSummary = event.description;
     history.push(actionSummary);
     actionsSent = true;
     taskCoordinator.updateStep(runId, stepIndex, { detail: `已${actionSummary}，等待页面更新后重新观察`, actionSent: true });
+    notifyTabHud(tabId, { status: 'running', stepIndex, totalSteps, stepTitle, detail: `已${actionSummary}，等待页面更新` });
     // 弹窗与页面渲染缓冲：若动作涉及新增、打开、点击等可能触发弹窗动画或异步加载的操作，给予充足的动画完成与 DOM 挂载等待时间
     const isTriggerAction = /新增|添加|创建|打开|查看|编辑|弹窗|modal|dialog|drawer|button|tab|click/i.test(actionSummary);
     const waitMs = isTriggerAction ? 700 : 400;
@@ -467,29 +568,49 @@ async function runImportedSuite(suite: ImportedTestSuite): Promise<unknown> {
       expectedReplayNavigation = null;
     }
     taskCoordinator.updateStep(runId, 0, { detail: '页面已连接，正在准备执行环境' });
+    notifyTabHud(tabId, {
+      status: 'running',
+      title: suite.tasks.length === 1 ? suite.tasks[0].name : `${suite.tasks.length} 个测试用例`,
+      stepIndex: 0,
+      totalSteps: flattened.length,
+      detail: '页面已连接，正在准备执行环境',
+    });
     await ensureReplayContentReady(tabId);
     try { await cdpInputSession.attach(tabId); } catch { /* CSP/Chrome constraints use the existing in-page fallback */ }
 
     for (let index = 0; index < flattened.length; index += 1) {
       if (activeAgentRunId !== runId) {
         taskCoordinator.finishTask(runId, 'cancelled', '用户手动取消任务');
+        notifyTabHud(tabId, { status: 'cancelled', title: '测试已取消' });
         return { success: false, cancelled: true, runId };
       }
       const { step } = flattened[index];
+      const currentTitle = step.name || (step.type === 'ai' ? step.instruction : step.type === 'assert' ? `断言：${step.instruction}` : step.type === 'sleep' ? `等待 ${step.milliseconds}ms` : '未知步骤');
       taskCoordinator.updateStep(runId, index, { status: 'running', detail: '正在准备本步骤' });
+      notifyTabHud(tabId, {
+        status: 'running',
+        title: suite.tasks.length === 1 ? suite.tasks[0].name : `${suite.tasks.length} 个测试用例`,
+        stepIndex: index,
+        totalSteps: flattened.length,
+        stepTitle: currentTitle,
+        detail: '正在准备本步骤',
+      });
       const startedAt = Date.now();
       try {
         let verified = false;
         let assertionPassed: boolean | undefined;
         let actionSent = false;
+        let stepReason: string | undefined;
         if (step.type === 'ai') {
-          const result = await executeAiInstruction(tabId, runId, step.instruction, index, history);
+          const result = await executeAiInstruction(tabId, runId, step.instruction, index, history, false, currentTitle, flattened.length);
           verified = result.verified;
           actionSent = result.actionsSent || false;
+          stepReason = result.reason;
         } else if (step.type === 'assert') {
-          const result = await executeAiInstruction(tabId, runId, step.instruction, index, history, true);
+          const result = await executeAiInstruction(tabId, runId, step.instruction, index, history, true, currentTitle, flattened.length);
           verified = result.verified;
           assertionPassed = true;
+          stepReason = result.reason;
         } else if (step.type === 'sleep') {
           await waitForAgentDelay(runId, step.milliseconds);
         } else {
@@ -498,24 +619,52 @@ async function runImportedSuite(suite: ImportedTestSuite): Promise<unknown> {
         taskCoordinator.updateStep(runId, index, {
           status: 'success', actionSent,
           verified, assertionPassed, durationMs: Date.now() - startedAt,
-          detail: assertionPassed ? '断言通过' : verified ? '步骤已验证' : actionSent ? '动作已执行，未做独立断言' : '步骤已完成',
+          detail: assertionPassed ? `断言通过：${stepReason || '符合预期'}` : verified ? `步骤已完成：${stepReason || ''}` : actionSent ? '动作已执行，未做独立断言' : '步骤已完成',
         });
       } catch (error) {
         const reason = (error as Error).message || '步骤执行失败';
         if (activeAgentRunId !== runId) {
           taskCoordinator.finishTask(runId, 'cancelled', '用户手动取消任务');
+          notifyTabHud(tabId, { status: 'cancelled', title: '测试已取消' });
           return { success: false, cancelled: true, runId };
         }
         taskCoordinator.updateStep(runId, index, { status: 'failed', error: reason, durationMs: Date.now() - startedAt });
         taskCoordinator.finishTask(runId, 'failed', `第 ${index + 1} 步失败：${reason}`);
+        notifyTabHud(tabId, {
+          status: 'failed',
+          title: '测试未通过 (FAIL)',
+          stepIndex: index,
+          totalSteps: flattened.length,
+          stepTitle: currentTitle,
+          reason,
+          error: reason,
+        });
         return { success: false, failedStep: index + 1, error: reason, runId };
       }
     }
-    taskCoordinator.finishTask(runId, 'completed');
-    return { success: true, runId, completed: flattened.length };
+    const finishedTask = taskCoordinator.finishTask(runId, 'completed');
+    const passedAssertStep = finishedTask?.steps.filter((s) => s.assertionPassed) || [];
+    const finalReason = passedAssertStep.length > 0
+      ? passedAssertStep.map((s) => s.detail?.replace(/^断言通过：/, '') || '断言验证通过').join('；')
+      : '所有测试操作步骤均已成功执行完成';
+
+    notifyTabHud(tabId, {
+      status: 'passed',
+      title: '测试通过 (PASS)',
+      stepIndex: flattened.length - 1,
+      totalSteps: flattened.length,
+      reason: finalReason,
+    });
+    return { success: true, runId, completed: flattened.length, reason: finalReason };
   } catch (error) {
     const reason = (error as Error).message || '用例执行失败';
     taskCoordinator.finishTask(runId, activeAgentRunId === runId ? 'failed' : 'cancelled', reason);
+    notifyTabHud(tabId, {
+      status: activeAgentRunId === runId ? 'failed' : 'cancelled',
+      title: activeAgentRunId === runId ? '测试未通过 (FAIL)' : '测试已取消',
+      reason,
+      error: reason,
+    });
     return { success: false, error: reason, runId };
   } finally {
     await cdpInputSession.detach();
@@ -763,8 +912,19 @@ export async function handleMessage(
       const instruction = message.payload.instruction?.trim();
       if (!instruction) return { error: '请先描述要执行的测试目标' };
       if (instruction.length > 4_000) return { error: '测试目标不能超过 4000 字符' };
+
+      const parsedSteps = splitNaturalLanguageInstruction(instruction);
+      const isMultiTask = parsedSteps.length > 2 || (parsedSteps.length === 2 && parsedSteps[0].type === 'ai' && parsedSteps[1].type === 'ai');
+
       return await runImportedSuite({
-        tasks: [{ name: '自然语言自动化测试', steps: [{ type: 'ai', instruction }] }],
+        tasks: [{
+          name: isMultiTask ? '跨系统/多任务自然语言测试' : '自然语言自动化测试',
+          steps: parsedSteps.map((s) => ({
+            type: s.type,
+            instruction: s.instruction,
+            name: s.name,
+          })),
+        }],
       });
     }
 
@@ -1225,6 +1385,7 @@ export async function handleMessage(
 
       await sessionRepo.create(newSession);
       await chrome.storage.session.set({ activeSessionId: newSession.id });
+      await refreshAllowedOrigins(newSession);
 
       const initialNavEvent: QAEvent = {
         id: createEntityId('evt'),
@@ -1270,6 +1431,7 @@ export async function handleMessage(
           ));
         } catch {}
       }
+      activeSessionAllowedOrigins.clear();
       await sessionRepo.complete(sessionId);
       await chrome.storage.session.remove('activeSessionId');
 
@@ -1285,11 +1447,31 @@ export async function handleMessage(
       if (!activeSession) {
         return { ignored: true, reason: 'No active session' };
       }
-      if (activeSession.tabId !== undefined && sender.tab?.id !== activeSession.tabId) {
-        return { ignored: true, reason: 'Event belongs to another tab' };
+      const isSameTab = activeSession.tabId === undefined || sender.tab?.id === activeSession.tabId;
+      if (!isSameTab) {
+        if (activeSessionAllowedOrigins.size === 0) {
+          await refreshAllowedOrigins(activeSession);
+        }
+        if (!isTabAllowedForSession(sender.tab, activeSession)) {
+          return { ignored: true, reason: 'Event belongs to another tab' };
+        }
       }
 
       const eventData = message.payload.event;
+      const isNewTab = !isSameTab;
+      let eventTitle = eventData.title;
+      if (isNewTab && !eventTitle.startsWith('[新标签页]')) {
+        eventTitle = `[新标签页] ${eventTitle}`;
+      }
+
+      // 如果同域名新标签页产生了交互，动态更新当前 Session 的活动标签页焦点
+      if (isNewTab && sender.tab?.id) {
+        activeSession.tabId = sender.tab.id;
+        if (sender.tab.url) {
+          activeSession.currentUrl = sender.tab.url;
+        }
+      }
+
       // 子 frame 的用户操作进入同一时间线；子 frame 导航不更新主页面地址。
       const isChildFrame = sender.frameId !== undefined && sender.frameId !== 0;
       if (isChildFrame && !['click', 'input', 'scroll', 'error', 'console'].includes(eventData.type)) {
@@ -1317,7 +1499,7 @@ export async function handleMessage(
         sessionId: activeSession.id,
         type: eventData.type,
         timestamp: eventData.timestamp || Date.now(),
-        title: eventData.title,
+        title: eventTitle,
         description: eventData.description,
         url: eventData.url || sender.tab?.url || activeSession.currentUrl,
         payload: {
@@ -1325,6 +1507,8 @@ export async function handleMessage(
           frameId: sender.frameId ?? 0,
           frameUrl: sender.url || eventData.url || '',
           ...(sender.documentId ? { documentId: sender.documentId } : {}),
+          tabId: sender.tab?.id,
+          isNewTab,
         } as QAEvent['payload'],
       };
 
@@ -1436,8 +1620,12 @@ export async function handleMessage(
               return { ignored: true, reason: 'Request started before current session began' };
             }
           } else if (activeSession) {
-            if (activeSession.tabId !== undefined && sender.tab?.id !== undefined && sender.tab.id !== activeSession.tabId) {
-              return { ignored: true, reason: 'Request belongs to another tab' };
+            const isSameTab = activeSession.tabId === undefined || sender.tab?.id === activeSession.tabId;
+            if (!isSameTab) {
+              if (activeSessionAllowedOrigins.size === 0) await refreshAllowedOrigins(activeSession);
+              if (!isTabAllowedForSession(sender.tab, activeSession)) {
+                return { ignored: true, reason: 'Request belongs to another tab' };
+              }
             }
             targetSessionId = activeSession.id;
           } else {
@@ -1451,8 +1639,12 @@ export async function handleMessage(
             }
           }
         } else if (activeSession) {
-          if (activeSession.tabId !== undefined && sender.tab?.id !== undefined && sender.tab.id !== activeSession.tabId) {
-            return { ignored: true, reason: 'Request belongs to another tab' };
+          const isSameTab = activeSession.tabId === undefined || sender.tab?.id === activeSession.tabId;
+          if (!isSameTab) {
+            if (activeSessionAllowedOrigins.size === 0) await refreshAllowedOrigins(activeSession);
+            if (!isTabAllowedForSession(sender.tab, activeSession)) {
+              return { ignored: true, reason: 'Request belongs to another tab' };
+            }
           }
           targetSessionId = activeSession.id;
         }
@@ -1467,8 +1659,12 @@ export async function handleMessage(
         return { ignored: true, reason: 'Target session does not exist' };
       }
 
-      if (targetSession.tabId !== undefined && sender.tab?.id !== undefined && sender.tab.id !== targetSession.tabId) {
-        return { ignored: true, reason: 'Request belongs to another tab' };
+      const isSameTargetTab = targetSession.tabId === undefined || sender.tab?.id === targetSession.tabId;
+      if (!isSameTargetTab) {
+        if (activeSessionAllowedOrigins.size === 0) await refreshAllowedOrigins(targetSession);
+        if (!isTabAllowedForSession(sender.tab, targetSession)) {
+          return { ignored: true, reason: 'Request belongs to another tab' };
+        }
       }
 
       if (requestId) {
@@ -1520,12 +1716,17 @@ export async function handleMessage(
       });
 
       // 关键修复：Timeline 事件的 sessionId 严格等于归属的 targetSessionId，杜绝写入错误的 activeSession
+      let netTitle = anomaly?.title || `${fullRequest.method} ${fullRequest.pathname}`;
+      if (!isSameTargetTab && !netTitle.startsWith('[新标签页]')) {
+        netTitle = `[新标签页] ${netTitle}`;
+      }
+
       const timelineEvent: QAEvent = {
         id: `evt-net-${fullRequest.id}`,
         sessionId: targetSessionId,
         type: isErrOrSlow ? 'error' : 'custom',
         timestamp: fullRequest.startedAt,
-        title: anomaly?.title || `${fullRequest.method} ${fullRequest.pathname}`,
+        title: netTitle,
         description: anomaly?.description || `HTTP ${fullRequest.status} · ${fullRequest.duration}ms`,
         url: fullRequest.url,
         payload: {
@@ -1610,10 +1811,42 @@ export async function handleMessage(
       if (message.payload.sessionId !== activeSession.id) {
         return { error: '当前测试 Session 已变化，请返回首页后重试' };
       }
-      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!isCapturablePageUrl(activeTab?.url) ||
-        (activeSession.tabId !== undefined && activeTab?.id !== activeSession.tabId)) {
-        return { error: activePageError(activeTab?.url) };
+      let activeTab: chrome.tabs.Tab | undefined = (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
+
+      if (activeSessionAllowedOrigins.size === 0) {
+        await refreshAllowedOrigins(activeSession);
+      }
+
+      const isCurrentTabAllowed = isTabAllowedForSession(activeTab, activeSession);
+
+      if (!isCurrentTabAllowed) {
+        // 当前激活的标签页不是被测系统的业务页面（比如用户切到了百度、Chrome设置页等）
+        // 自动在当前窗口中寻回属于本次测试的业务标签页（优先考虑原绑定的 tabId，其次考虑同窗口其他符合业务域名的 tab）
+        const allTabs = await chrome.tabs.query({ currentWindow: true });
+        const originalTab = activeSession.tabId !== undefined ? allTabs.find((t) => t.id === activeSession.tabId) : undefined;
+
+        let fallbackTab = originalTab && isTabAllowedForSession(originalTab, activeSession) ? originalTab : undefined;
+        if (!fallbackTab) {
+          fallbackTab = allTabs.find((t) => isTabAllowedForSession(t, activeSession));
+        }
+
+        if (fallbackTab && fallbackTab.id) {
+          // 找到了业务标签页！自动将浏览器焦点切回被测系统页面
+          await chrome.tabs.update(fallbackTab.id, { active: true });
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          activeTab = fallbackTab;
+        } else {
+          return { error: activePageError(activeTab?.url) };
+        }
+      }
+
+      // 如果当前是在被测系统的新标签页，或者自动切回了页面，动态将 session 的焦点对准该目标标签
+      if (activeTab?.id && activeTab.id !== activeSession.tabId) {
+        activeSession.tabId = activeTab.id;
+        if (activeTab.url) {
+          activeSession.currentUrl = activeTab.url;
+          await sessionRepo.updateCurrentUrl(activeSession.id, activeTab.url);
+        }
       }
 
       const now = Date.now();
@@ -1644,12 +1877,40 @@ export async function handleMessage(
             sessionId: activeSession.id,
             snapshotId,
             createdAt: now,
-            url: activeSession.currentUrl,
+            url: activeTab?.url || activeSession.currentUrl,
             dataUrl: screenshotUrl,
           });
         }
       } catch (e) {
         console.warn('[QA Copilot SW] 截图异常:', e);
+      }
+
+      let currentUser: string | undefined;
+      if (activeTab?.id) {
+        try {
+          const pageCtx = await chrome.tabs.sendMessage(activeTab.id, { type: 'GET_PAGE_CONTEXT' }, { frameId: 0 }) as {
+            currentUser?: string;
+          } | undefined;
+          if (pageCtx?.currentUser) {
+            currentUser = pageCtx.currentUser;
+          }
+        } catch {}
+      }
+
+      if (!currentUser) {
+        for (const req of windowRequests) {
+          if (req.responseBody && (req.pathname?.includes('getInfo') || req.pathname?.includes('userInfo') || req.pathname?.includes('user/info') || req.pathname?.includes('currentUser'))) {
+            try {
+              const parsed = JSON.parse(req.responseBody);
+              const userObj = parsed.user || parsed.data?.user || parsed.data || parsed;
+              const nameCandidate = userObj?.nickName || userObj?.nickname || userObj?.userName || userObj?.username || userObj?.realName || userObj?.name;
+              if (nameCandidate && typeof nameCandidate === 'string' && nameCandidate.length <= 30) {
+                currentUser = `${nameCandidate}${userObj.userName && userObj.userName !== nameCandidate ? ` (${userObj.userName})` : ''}`;
+                break;
+              }
+            } catch {}
+          }
+        }
       }
 
       const errorEvents = windowEvents.filter(
@@ -1661,8 +1922,9 @@ export async function handleMessage(
         id: snapshotId,
         sessionId: activeSession.id,
         createdAt: now,
-        url: activeSession.currentUrl,
+        url: activeTab?.url || activeSession.currentUrl,
         environment: activeSession.environment,
+        currentUser,
         browserInfo: activeSession.browserInfo,
         windowDurationSec: contextBeforeSec,
         contextBeforeSec,

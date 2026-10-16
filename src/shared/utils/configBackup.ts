@@ -18,6 +18,8 @@ export interface AppConfigExportData {
       aiRemoteEndpoint?: string;
       aiBugAssistanceEnabled: boolean;
       aiVisionEnabled?: boolean;
+      aiEndpointType?: 'chat' | 'responses' | 'none';
+      aiTimeoutSeconds?: number;
     };
     zentao: {
       zentaoBaseUrl: string;
@@ -62,6 +64,8 @@ export async function buildExportPayload(): Promise<string> {
     aiRemoteEndpoint: '',
     aiBugAssistanceEnabled: true,
     aiVisionEnabled: true,
+    aiEndpointType: 'chat',
+    aiTimeoutSeconds: 60,
     zentaoBaseUrl: 'https://zentao.hbisscm.com',
     zentaoAuthMode: 'cookie',
     zentaoApiVersion: 'v2',
@@ -102,6 +106,8 @@ export async function buildExportPayload(): Promise<string> {
         aiRemoteEndpoint: localRes.aiRemoteEndpoint || localRes.aiBaseUrl || '',
         aiBugAssistanceEnabled: localRes.aiBugAssistanceEnabled !== false,
         aiVisionEnabled: localRes.aiVisionEnabled !== false,
+        aiEndpointType: localRes.aiEndpointType || 'chat',
+        aiTimeoutSeconds: Number(localRes.aiTimeoutSeconds) || 60,
       },
       zentao: {
         zentaoBaseUrl: localRes.zentaoBaseUrl || 'https://zentao.hbisscm.com',
@@ -178,6 +184,14 @@ export function parseAndValidateConfig(jsonStr: string): ParseResult {
   }
   if ('aiVisionEnabled' in aiSrc) {
     localSettings.aiVisionEnabled = Boolean(aiSrc.aiVisionEnabled);
+    hasAi = true;
+  }
+  if ('aiTimeoutSeconds' in aiSrc) {
+    localSettings.aiTimeoutSeconds = Number(aiSrc.aiTimeoutSeconds) || 60;
+    hasAi = true;
+  }
+  if ('aiEndpointType' in aiSrc) {
+    localSettings.aiEndpointType = ['chat', 'responses', 'none'].includes(aiSrc.aiEndpointType) ? aiSrc.aiEndpointType : 'chat';
     hasAi = true;
   }
   if (hasAi) {
@@ -290,6 +304,7 @@ export async function applyImportedConfig(extracted: ExtractedConfig): Promise<v
         baseUrl: localSettings.aiBaseUrl || 'https://api.deepseek.com/v1',
         apiKey: localSettings.aiApiKey || '',
         model: localSettings.aiModel || 'deepseek-chat',
+        endpointType: localSettings.aiEndpointType,
       });
     } catch {
       // 容错吸收

@@ -1,6 +1,6 @@
 (function() {
   "use strict";
-  function captureText(value, maxLength = 2e4) {
+  function captureText(value, maxLength = 1e5) {
     var _a;
     if (value === void 0 || value === null) return "";
     if (typeof value === "string") return value.slice(0, maxLength);
@@ -80,7 +80,7 @@
       if (event.source !== window || ((_a = event.data) == null ? void 0 : _a.source) !== "QA_COPILOT_CONTENT") return;
       if (((_b = event.data) == null ? void 0 : _b.type) === "BRIDGE_READY" || ((_c = event.data) == null ? void 0 : _c.type) === "PING_INTERCEPTOR") {
         bridgeReady = true;
-        postToContentScript({ ready: true, version: "1.0.9" }, "INTERCEPTOR_READY");
+        postToContentScript({ ready: true, version: "1.1.0" }, "INTERCEPTOR_READY");
         while (pendingMessages.length > 0) {
           const message = pendingMessages.shift();
           if (message) window.postMessage(message, "*");

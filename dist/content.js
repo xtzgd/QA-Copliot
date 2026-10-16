@@ -891,12 +891,15 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       return item.optionElements.get(valOrLabel) || null;
     }
     static readRadioGroupValue(element) {
-      var _a;
+      var _a, _b, _c, _d, _e, _f, _g, _h;
       const entry = [...this.registry.values()].find((item) => item.element === element && item.optionElements);
       if (!entry) return void 0;
       for (const [label, node] of entry.optionElements) {
         const radio = node.tagName === "INPUT" ? node : (_a = node.querySelector) == null ? void 0 : _a.call(node, 'input[type="radio"]');
-        if (radio == null ? void 0 : radio.checked) return label;
+        const isChecked = (radio == null ? void 0 : radio.checked) || Boolean(
+          ((_c = (_b = node.classList) == null ? void 0 : _b.contains) == null ? void 0 : _c.call(_b, "is-checked")) || ((_e = (_d = node.classList) == null ? void 0 : _d.contains) == null ? void 0 : _e.call(_d, "ant-radio-checked")) || ((_g = (_f = node.classList) == null ? void 0 : _f.contains) == null ? void 0 : _g.call(_f, "arco-radio-checked")) || ((_h = node.getAttribute) == null ? void 0 : _h.call(node, "aria-checked")) === "true"
+        );
+        if (isChecked) return label;
       }
       return "";
     }
@@ -1227,7 +1230,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       const radioInputs = [];
       const processedDropdownRoots = /* @__PURE__ */ new Set();
       rawElements.forEach((elem, index) => {
-        var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y;
+        var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H, _I, _J, _K, _L, _M, _N, _O;
         const element = elem;
         const tag = element.tagName.toLowerCase();
         const input = element;
@@ -1269,6 +1272,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         let unsupportedReason;
         let options;
         let optionsState = "none";
+        let isMultiple = false;
         let groupName;
         if (input.type === "file") {
           kind = "unsupported";
@@ -1287,6 +1291,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
           readOnly = false;
           if (tag === "select") {
             const select = element;
+            isMultiple = select.multiple;
             optionsState = "complete";
             options = Array.from(select.options).map((opt, optIdx) => {
               var _a2;
@@ -1302,21 +1307,37 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
             isEmpty = !currentValue || selectedText.includes("请选择") || selectedText.toLowerCase().includes("select") || selectedText === "--请选择--";
           } else {
             const selectWrapper = canonicalWrapper;
-            const trigger = ((_p = selectWrapper.querySelector) == null ? void 0 : _p.call(selectWrapper, ".el-select__wrapper, .select-trigger, .ant-select-selector, .arco-select-view, .n-base-selection, input")) || element || selectWrapper;
-            const selectedItemEl = (_q = selectWrapper.querySelector) == null ? void 0 : _q.call(
+            isMultiple = Boolean(
+              ((_q = (_p = canonicalWrapper.classList) == null ? void 0 : _p.contains) == null ? void 0 : _q.call(_p, "is-multiple")) || ((_s = (_r = canonicalWrapper.classList) == null ? void 0 : _r.contains) == null ? void 0 : _s.call(_r, "el-select--multiple")) || ((_u = (_t = canonicalWrapper.classList) == null ? void 0 : _t.contains) == null ? void 0 : _u.call(_t, "ant-select-multiple")) || ((_w = (_v = canonicalWrapper.classList) == null ? void 0 : _v.contains) == null ? void 0 : _w.call(_v, "ant-tree-select-multiple")) || ((_y = (_x = canonicalWrapper.classList) == null ? void 0 : _x.contains) == null ? void 0 : _y.call(_x, "arco-select-multiple")) || ((_A = (_z = canonicalWrapper.classList) == null ? void 0 : _z.contains) == null ? void 0 : _A.call(_z, "n-base-selection--multiple")) || ((_B = canonicalWrapper.querySelector) == null ? void 0 : _B.call(canonicalWrapper, ".el-select__tags, .ant-select-selection-overflow, .vue-treeselect__multi-value")) || ((_C = canonicalWrapper.getAttribute) == null ? void 0 : _C.call(canonicalWrapper, "aria-multiselectable")) === "true" || ((_D = element.getAttribute) == null ? void 0 : _D.call(element, "aria-multiselectable")) === "true"
+            );
+            const trigger = ((_E = selectWrapper.querySelector) == null ? void 0 : _E.call(selectWrapper, ".el-select__wrapper, .select-trigger, .ant-select-selector, .arco-select-view, .n-base-selection, input")) || element || selectWrapper;
+            const tagNodes = (_F = selectWrapper.querySelectorAll) == null ? void 0 : _F.call(
+              selectWrapper,
+              ".el-select__tags-text, .ant-select-selection-item-content, .vue-treeselect__multi-value-item, .arco-tag"
+            );
+            const selectedItemEl = (_G = selectWrapper.querySelector) == null ? void 0 : _G.call(
               selectWrapper,
               '.el-select__selected-item:not(.is-transparent), .el-select__tags-text, .ant-select-selection-item, .ant-select-selection-selected-value, .arco-select-view-value, .n-base-selection-label, .el-select-dropdown__item.is-selected, .vue-treeselect__single-value, [class*="single-value"]'
             );
-            const placeholder = (innerInput == null ? void 0 : innerInput.placeholder) || ((_r = selectWrapper.getAttribute) == null ? void 0 : _r.call(selectWrapper, "placeholder")) || ((_u = (_t = (_s = selectWrapper.querySelector) == null ? void 0 : _s.call(selectWrapper, '.el-select__placeholder, .ant-select-selection-placeholder, .vue-treeselect__placeholder, [class*="placeholder"]')) == null ? void 0 : _t.textContent) == null ? void 0 : _u.trim()) || "";
+            const placeholder = (innerInput == null ? void 0 : innerInput.placeholder) || ((_H = selectWrapper.getAttribute) == null ? void 0 : _H.call(selectWrapper, "placeholder")) || ((_K = (_J = (_I = selectWrapper.querySelector) == null ? void 0 : _I.call(selectWrapper, '.el-select__placeholder, .ant-select-selection-placeholder, .vue-treeselect__placeholder, [class*="placeholder"]')) == null ? void 0 : _J.textContent) == null ? void 0 : _K.trim()) || "";
             let displayVal = "";
-            if (selectedItemEl && ((_v = selectedItemEl.textContent) == null ? void 0 : _v.trim())) {
+            if (tagNodes && tagNodes.length > 0) {
+              const tagTexts = Array.from(tagNodes).map((n) => {
+                var _a2;
+                return ((_a2 = n.textContent) == null ? void 0 : _a2.trim()) || "";
+              }).filter(Boolean);
+              if (tagTexts.length > 0) {
+                displayVal = tagTexts.join(", ");
+              }
+            }
+            if (!displayVal && selectedItemEl && ((_L = selectedItemEl.textContent) == null ? void 0 : _L.trim())) {
               displayVal = selectedItemEl.textContent.trim();
-            } else if (innerInput && innerInput.value && innerInput.value !== placeholder && !innerInput.value.includes("请选择") && !((_x = (_w = innerInput.classList) == null ? void 0 : _w.contains) == null ? void 0 : _x.call(_w, "vue-treeselect__input")) && ((_y = innerInput.getAttribute) == null ? void 0 : _y.call(innerInput, "role")) !== "searchbox") {
+            } else if (!displayVal && innerInput && innerInput.value && innerInput.value !== placeholder && !innerInput.value.includes("请选择") && !((_N = (_M = innerInput.classList) == null ? void 0 : _M.contains) == null ? void 0 : _N.call(_M, "vue-treeselect__input")) && ((_O = innerInput.getAttribute) == null ? void 0 : _O.call(innerInput, "role")) !== "searchbox") {
               displayVal = innerInput.value.trim();
             }
             currentValue = displayVal;
             isEmpty = !displayVal || displayVal === placeholder || displayVal.includes("请选择") || displayVal.toLowerCase().includes("select") || displayVal === "--请选择--";
-            const probedOptions = _FormScanner.extractDropdownOptionsFromDom(element, selectWrapper, root);
+            const probedOptions = _FormScanner.extractDropdownOptionsFromDom(element, selectWrapper, root, label);
             if (probedOptions.length > 0) {
               options = probedOptions;
               optionsState = "complete";
@@ -1379,6 +1400,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
           },
           optionsState,
           options,
+          isMultiple: isDropdown ? isMultiple : void 0,
           groupName,
           unsupportedReason
         };
@@ -1427,11 +1449,12 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         let checkedLabel = "";
         const groupKeyName = typeof groupKeyRef === "string" ? groupKeyRef : firstRadio.name || (groupKeyRef.id ? groupKeyRef.id : `group_${radioGroupIndex}`);
         radios.forEach((radio, rIdx) => {
+          var _a2, _b2, _c2, _d2, _e, _f, _g, _h, _i, _j;
           const parentNode = radio.parentElement;
-          const labelWrapper = parentNode ? parentNode.closest("label, .el-radio, .ant-radio") || parentNode : radio.closest("label, .el-radio, .ant-radio");
+          const labelWrapper = parentNode ? parentNode.closest("label, .el-radio, .ant-radio, .arco-radio, .n-radio, .t-radio, .semi-radio") || parentNode : radio.closest("label, .el-radio, .ant-radio, .arco-radio, .n-radio, .t-radio, .semi-radio");
           let optLabel = "";
           if (labelWrapper) {
-            const radioTextSpan = labelWrapper.querySelector(".el-radio__label, .ant-radio-wrapper, span");
+            const radioTextSpan = labelWrapper.querySelector(".el-radio__label, .ant-radio-wrapper, .arco-radio-text, span");
             if (radioTextSpan && radioTextSpan.textContent && radioTextSpan.textContent.trim()) {
               optLabel = radioTextSpan.textContent.trim();
             } else {
@@ -1456,7 +1479,10 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
           optionElements.set(optLabel, clickTarget);
           optionElements.set(optVal, clickTarget);
           optionElements.set(optId, clickTarget);
-          if (radio.checked) {
+          const isChecked = Boolean(
+            radio.checked || ((_b2 = (_a2 = labelWrapper == null ? void 0 : labelWrapper.classList) == null ? void 0 : _a2.contains) == null ? void 0 : _b2.call(_a2, "is-checked")) || ((_d2 = (_c2 = labelWrapper == null ? void 0 : labelWrapper.classList) == null ? void 0 : _c2.contains) == null ? void 0 : _d2.call(_c2, "ant-radio-checked")) || ((_f = (_e = labelWrapper == null ? void 0 : labelWrapper.classList) == null ? void 0 : _e.contains) == null ? void 0 : _f.call(_e, "arco-radio-checked")) || ((_h = (_g = labelWrapper == null ? void 0 : labelWrapper.classList) == null ? void 0 : _g.contains) == null ? void 0 : _h.call(_g, "n-radio--checked")) || ((_i = radio.getAttribute) == null ? void 0 : _i.call(radio, "aria-checked")) === "true" || ((_j = labelWrapper == null ? void 0 : labelWrapper.getAttribute) == null ? void 0 : _j.call(labelWrapper, "aria-checked")) === "true"
+          );
+          if (isChecked) {
             checkedLabel = optLabel;
           }
         });
@@ -1525,31 +1551,31 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         }
       }
     }
-    static extractOptionsFromContainer(container) {
-      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+    static extractOptionsFromContainer(container, allowSidebarTree = false) {
+      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
       if (!container || typeof container.querySelectorAll !== "function") return [];
       try {
         const raw = Array.from(container.querySelectorAll(this.DROPDOWN_OPTION_SELECTORS));
         const validNodes = raw.filter((el) => {
           var _a2, _b2;
           if (!el) return false;
-          if ((_a2 = el.closest) == null ? void 0 : _a2.call(el, 'aside, nav, .sidebar, .org-tree, [class*="sidebar"]')) return false;
-          if ((_b2 = el.querySelector) == null ? void 0 : _b2.call(el, '.el-select-dropdown__item, .el-tree-node__content, .vue-treeselect__label, [role="option"]')) return false;
+          if (!allowSidebarTree && ((_a2 = el.closest) == null ? void 0 : _a2.call(el, 'aside, nav, .sidebar, .org-tree, [class*="sidebar"]'))) return false;
+          if ((_b2 = el.querySelector) == null ? void 0 : _b2.call(el, '.el-select-dropdown__item, .el-tree-node__content, .vue-treeselect__option, [role="option"], [role="treeitem"]')) return false;
           return true;
         });
         const options = [];
         const seenLabels = /* @__PURE__ */ new Set();
         for (let idx = 0; idx < validNodes.length; idx++) {
           const el = validNodes[idx];
-          const rawText = (el.innerText || el.textContent || "").trim().replace(/\s+/g, " ");
+          const rawText = (((_b = (_a = el.querySelector) == null ? void 0 : _a.call(el, ".vue-treeselect__label, .el-tree-node__label, .el-cascader-node__label")) == null ? void 0 : _b.textContent) || el.innerText || el.textContent || "").trim().replace(/\s+/g, " ");
           if (!rawText || rawText.includes("请选择") || rawText.toLowerCase().includes("select") || rawText === "--请选择--") continue;
           let cleanText = rawText.replace(/[\(（]\d+[\)）]/g, "").trim();
           if (!cleanText) continue;
           if (seenLabels.has(cleanText)) continue;
           seenLabels.add(cleanText);
-          const val = ((_a = el.getAttribute) == null ? void 0 : _a.call(el, "data-value")) || ((_b = el.getAttribute) == null ? void 0 : _b.call(el, "value")) || cleanText;
+          const val = ((_c = el.getAttribute) == null ? void 0 : _c.call(el, "data-value")) || ((_d = el.getAttribute) == null ? void 0 : _d.call(el, "value")) || cleanText;
           const disabled = Boolean(
-            ((_d = (_c = el.classList) == null ? void 0 : _c.contains) == null ? void 0 : _d.call(_c, "is-disabled")) || ((_f = (_e = el.classList) == null ? void 0 : _e.contains) == null ? void 0 : _f.call(_e, "ant-select-item-option-disabled")) || ((_h = (_g = el.classList) == null ? void 0 : _g.contains) == null ? void 0 : _h.call(_g, "vue-treeselect__option--disabled")) || ((_j = (_i = el.classList) == null ? void 0 : _i.contains) == null ? void 0 : _j.call(_i, "vue-treeselect__label--disabled")) || ((_k = el.getAttribute) == null ? void 0 : _k.call(el, "aria-disabled")) === "true"
+            ((_f = (_e = el.classList) == null ? void 0 : _e.contains) == null ? void 0 : _f.call(_e, "is-disabled")) || ((_h = (_g = el.classList) == null ? void 0 : _g.contains) == null ? void 0 : _h.call(_g, "ant-select-item-option-disabled")) || ((_j = (_i = el.classList) == null ? void 0 : _i.contains) == null ? void 0 : _j.call(_i, "vue-treeselect__option--disabled")) || ((_l = (_k = el.classList) == null ? void 0 : _k.contains) == null ? void 0 : _l.call(_k, "vue-treeselect__label--disabled")) || ((_m = el.getAttribute) == null ? void 0 : _m.call(el, "aria-disabled")) === "true"
           );
           options.push({
             optionId: el.id || `opt_${idx}_${cleanText}`,
@@ -1568,27 +1594,27 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
      * 杜绝跨下拉框选项串扰（如将用户性别的选项挂到归属部门下）
      */
     static findAssociatedDropdownContainer(element, selectWrapper, root = document) {
-      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
       const docContext = element.ownerDocument || root;
       const innerInput = element.tagName.toLowerCase() === "input" ? element : (_a = selectWrapper.querySelector) == null ? void 0 : _a.call(selectWrapper, "input");
       const internalMenu = (_b = selectWrapper.querySelector) == null ? void 0 : _b.call(
         selectWrapper,
         '.vue-treeselect__menu, .vue-treeselect__menu-container, [class*="treeselect"][class*="menu"], .el-select-dropdown'
       );
-      if (internalMenu) {
+      if (internalMenu && (((_c = internalMenu.style) == null ? void 0 : _c.display) !== "none" || ((_d = internalMenu.querySelector) == null ? void 0 : _d.call(internalMenu, this.DROPDOWN_OPTION_SELECTORS)))) {
         return internalMenu;
       }
-      const linkedNodes = [element, innerInput, selectWrapper, (_c = selectWrapper.querySelector) == null ? void 0 : _c.call(selectWrapper, "[aria-controls], [aria-owns]")].filter(Boolean);
+      const linkedNodes = [element, innerInput, selectWrapper, (_e = selectWrapper.querySelector) == null ? void 0 : _e.call(selectWrapper, "[aria-controls], [aria-owns]")].filter(Boolean);
       for (const node of linkedNodes) {
-        const ids = [(_d = node.getAttribute) == null ? void 0 : _d.call(node, "aria-controls"), (_e = node.getAttribute) == null ? void 0 : _e.call(node, "aria-owns")].filter(Boolean).join(" ").split(/\s+/).filter(Boolean);
+        const ids = [(_f = node.getAttribute) == null ? void 0 : _f.call(node, "aria-controls"), (_g = node.getAttribute) == null ? void 0 : _g.call(node, "aria-owns")].filter(Boolean).join(" ").split(/\s+/).filter(Boolean);
         for (const id of ids) {
-          const linked = (_f = docContext.getElementById) == null ? void 0 : _f.call(docContext, id);
+          const linked = (_h = docContext.getElementById) == null ? void 0 : _h.call(docContext, id);
           if (!linked) continue;
-          const menu = ((_g = linked.closest) == null ? void 0 : _g.call(linked, ".el-select-dropdown, .el-tree-select__popper, .ant-select-dropdown, .el-cascader__dropdown, .ant-cascader-dropdown, .arco-select-popup, .arco-cascader-popup")) || linked;
+          const menu = ((_i = linked.closest) == null ? void 0 : _i.call(linked, ".el-select-dropdown, .el-tree-select__popper, .ant-select-dropdown, .el-cascader__dropdown, .ant-cascader-dropdown, .arco-select-popup, .arco-cascader-popup")) || linked;
           let hidden = false;
           for (let current = menu; current; current = current.parentElement) {
-            const style = ((_i = (_h = current.ownerDocument) == null ? void 0 : _h.defaultView) == null ? void 0 : _i.getComputedStyle(current)) || current.style;
-            if (current.hidden || ((_j = current.getAttribute) == null ? void 0 : _j.call(current, "aria-hidden")) === "true" || (style == null ? void 0 : style.display) === "none" || (style == null ? void 0 : style.visibility) === "hidden") {
+            const style = ((_k = (_j = current.ownerDocument) == null ? void 0 : _j.defaultView) == null ? void 0 : _k.getComputedStyle(current)) || current.style;
+            if (current.hidden || (style == null ? void 0 : style.display) === "none" || (style == null ? void 0 : style.visibility) === "hidden") {
               hidden = true;
               break;
             }
@@ -1598,26 +1624,41 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       }
       if (docContext && typeof docContext.querySelectorAll === "function") {
         const poppers = Array.from(docContext.querySelectorAll(
-          '.el-select-dropdown, .el-tree-select__popper, .el-cascader__dropdown, .el-cascader-panel, .ant-cascader-dropdown, .arco-cascader-popup, .n-cascader-menu, .ant-select-dropdown, .arco-select-popup, .vue-treeselect__portal-container, [class*="select-dropdown"]'
+          '.el-select-dropdown, .el-tree-select__popper, .el-cascader__dropdown, .el-cascader-panel, .ant-cascader-dropdown, .arco-cascader-popup, .n-cascader-menu, .ant-select-dropdown, .arco-select-popup, .vue-treeselect__portal-container, .vue-treeselect__menu, [class*="select-dropdown"]'
         ));
         const wRect = typeof selectWrapper.getBoundingClientRect === "function" ? selectWrapper.getBoundingClientRect() : null;
-        for (const popper of poppers) {
-          if (!popper || ((_k = popper.style) == null ? void 0 : _k.display) === "none" || ((_l = popper.style) == null ? void 0 : _l.visibility) === "hidden" || ((_m = popper.getAttribute) == null ? void 0 : _m.call(popper, "aria-hidden")) === "true") continue;
+        const visiblePoppers = poppers.filter((popper) => {
+          var _a2, _b2, _c2, _d2, _e2;
+          if (!popper) return false;
+          if (popper.hidden || ((_a2 = popper.style) == null ? void 0 : _a2.display) === "none" || ((_b2 = popper.style) == null ? void 0 : _b2.visibility) === "hidden") return false;
+          const comp = (_e2 = (_d2 = (_c2 = popper.ownerDocument) == null ? void 0 : _c2.defaultView) == null ? void 0 : _d2.getComputedStyle) == null ? void 0 : _e2.call(_d2, popper);
+          if (comp && (comp.display === "none" || comp.visibility === "hidden")) return false;
+          return true;
+        });
+        if (visiblePoppers.length === 1) {
+          return visiblePoppers[0];
+        }
+        let bestPopper = null;
+        let minDistance = Infinity;
+        for (const popper of visiblePoppers) {
           if (wRect && wRect.width > 0 && wRect.height > 0 && typeof popper.getBoundingClientRect === "function") {
             const pRect = popper.getBoundingClientRect();
             if (pRect.width > 0 && pRect.height > 0) {
-              const xOverlap = pRect.left < wRect.right + 25 && pRect.right > wRect.left - 25;
-              const yClose = Math.abs(pRect.top - wRect.bottom) < 40 || Math.abs(pRect.bottom - wRect.top) < 40;
-              if (!xOverlap || !yClose) {
-                continue;
+              const xOverlap = pRect.left < wRect.right + 60 && pRect.right > wRect.left - 60;
+              const yDist = Math.min(Math.abs(pRect.top - wRect.bottom), Math.abs(pRect.bottom - wRect.top));
+              if (xOverlap && yDist < 80) {
+                if (yDist < minDistance) {
+                  minDistance = yDist;
+                  bestPopper = popper;
+                }
               }
             }
-          } else if (poppers.length > 1) {
-            continue;
           }
-          return popper;
         }
+        if (bestPopper) return bestPopper;
+        if (visiblePoppers.length > 0) return visiblePoppers[visiblePoppers.length - 1];
       }
+      if (internalMenu) return internalMenu;
       return null;
     }
     /**
@@ -1676,12 +1717,35 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       }
       return [];
     }
-    static extractDropdownOptionsFromDom(element, selectWrapper, root = document) {
+    static extractDropdownOptionsFromDom(element, selectWrapper, root = document, fieldLabel = "") {
       const vueOpts = this.extractOptionsFromVueInstance(element, selectWrapper);
       if (vueOpts.length > 0) return vueOpts;
       const container = this.findAssociatedDropdownContainer(element, selectWrapper, root);
-      if (!container) return [];
-      return this.extractOptionsFromContainer(container);
+      if (container) {
+        const opts = this.extractOptionsFromContainer(container);
+        if (opts.length > 0) return opts;
+      }
+      try {
+        const combinedLabel = (fieldLabel + " " + (element.getAttribute("aria-label") || element.getAttribute("placeholder") || selectWrapper.textContent || "")).toLowerCase();
+        const isOrgOrDept = combinedLabel.includes("部门") || combinedLabel.includes("dept") || combinedLabel.includes("组织") || combinedLabel.includes("机构") || combinedLabel.includes("company") || combinedLabel.includes("org");
+        if (isOrgOrDept) {
+          const docCtx = element.ownerDocument || root;
+          const pageTrees = Array.from(docCtx.querySelectorAll(
+            '.head-container .el-tree, .tree-container .el-tree, .dept-tree, .org-tree, aside .el-tree, [class*="tree"] .el-tree, .el-tree'
+          ));
+          for (const tree of pageTrees) {
+            const nodes = Array.from(tree.querySelectorAll('.el-tree-node__content, .el-tree-node__label, [role="treeitem"]'));
+            if (nodes.length > 0) {
+              const orgOpts = this.extractOptionsFromContainer(tree, true);
+              if (orgOpts.length > 0) {
+                return orgOpts.slice(0, 20);
+              }
+            }
+          }
+        }
+      } catch {
+      }
+      return [];
     }
     /** 扫描保持只读，兼容旧入口。 */
     static async scanWithProbe(root = document) {
@@ -1710,7 +1774,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     '[role="treeitem"]'
   ].join(", "));
   let FormScanner = _FormScanner;
-  class FormExecutor {
+  const _FormExecutor = class _FormExecutor {
     static cancel(runId) {
       if (!runId || !this.activeRunId || runId === this.activeRunId) {
         this.isCancelled = true;
@@ -1793,10 +1857,47 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       element.dispatchEvent(new Event("change", { bubbles: true }));
     }
     /**
+     * 辅助方法：模拟派发完整的手势与点击事件流 (触发 React rc-select / Vue Element Plus 的事件监听)
+     */
+    static dispatchFullClick(el) {
+      var _a;
+      try {
+        const rect = typeof el.getBoundingClientRect === "function" ? el.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
+        const clientX = rect.left + rect.width / 2;
+        const clientY = rect.top + rect.height / 2;
+        const eventInit = { bubbles: true, cancelable: true, composed: true, button: 0, view: typeof window !== "undefined" ? window : void 0, clientX, clientY };
+        if (typeof PointerEvent !== "undefined") {
+          el.dispatchEvent(new PointerEvent("pointerdown", { ...eventInit, buttons: 1, pointerType: "mouse", isPrimary: true }));
+        }
+        if (typeof MouseEvent !== "undefined") {
+          el.dispatchEvent(new MouseEvent("mousedown", { ...eventInit, buttons: 1 }));
+        }
+        if (typeof el.focus === "function") {
+          el.focus();
+        }
+        if (typeof PointerEvent !== "undefined") {
+          el.dispatchEvent(new PointerEvent("pointerup", { ...eventInit, buttons: 0, pointerType: "mouse", isPrimary: true }));
+        }
+        if (typeof MouseEvent !== "undefined") {
+          el.dispatchEvent(new MouseEvent("mouseup", eventInit));
+          el.dispatchEvent(new MouseEvent("click", eventInit));
+        } else if (typeof el.click === "function") {
+          el.click();
+        } else if (typeof el.dispatchEvent === "function") {
+          el.dispatchEvent(new Event("click", { bubbles: true }));
+        }
+      } catch {
+        try {
+          (_a = el.click) == null ? void 0 : _a.call(el);
+        } catch {
+        }
+      }
+    }
+    /**
      * 读取当前 DOM 的实际值
      */
     static readElementValue(element) {
-      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
+      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
       const tag = element.tagName.toLowerCase();
       const input = element;
       if (input.type === "radio") {
@@ -1815,16 +1916,32 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       const isCustomSelect = FormScanner.isDropdownComponent(element, dropdownRoot);
       if (isCustomSelect) {
         const selectWrapper = dropdownRoot || element;
-        const selectedItem = (_a = selectWrapper.querySelector) == null ? void 0 : _a.call(
+        const tags = (_a = selectWrapper.querySelectorAll) == null ? void 0 : _a.call(
           selectWrapper,
-          '.vue-treeselect__single-value, .el-select__selected-item:not(.is-transparent), .el-select__tags-text, .ant-select-selection-item, .ant-select-selection-selected-value, .arco-select-view-value, .n-base-selection-label, .el-select-dropdown__item.is-selected, [class*="single-value"]'
+          ".el-select__tags-text, .ant-select-selection-item-content, .vue-treeselect__multi-value-item, .arco-tag"
         );
-        if ((_b = selectedItem == null ? void 0 : selectedItem.textContent) == null ? void 0 : _b.trim()) {
-          return selectedItem.textContent.trim();
+        if (tags && tags.length > 0) {
+          const tagTexts = Array.from(tags).map((n) => {
+            var _a2;
+            return ((_a2 = n.textContent) == null ? void 0 : _a2.trim()) || "";
+          }).filter(Boolean);
+          if (tagTexts.length > 0) {
+            return tagTexts.join(", ");
+          }
         }
-        const displayInput = element.tagName.toLowerCase() === "input" ? element : (_c = selectWrapper.querySelector) == null ? void 0 : _c.call(selectWrapper, "input");
-        const placeholder = (displayInput == null ? void 0 : displayInput.placeholder) || ((_d = selectWrapper.getAttribute) == null ? void 0 : _d.call(selectWrapper, "placeholder")) || ((_g = (_f = (_e = selectWrapper.querySelector) == null ? void 0 : _e.call(selectWrapper, '.el-select__placeholder, .ant-select-selection-placeholder, .vue-treeselect__placeholder, [class*="placeholder"]')) == null ? void 0 : _f.textContent) == null ? void 0 : _g.trim()) || "";
-        if ((displayInput == null ? void 0 : displayInput.value) && displayInput.value !== placeholder && !displayInput.value.includes("请选择") && !((_i = (_h = displayInput.classList) == null ? void 0 : _h.contains) == null ? void 0 : _i.call(_h, "vue-treeselect__input")) && !((_k = (_j = displayInput.classList) == null ? void 0 : _j.contains) == null ? void 0 : _k.call(_j, "ant-select-selection-search-input")) && ((_l = displayInput.getAttribute) == null ? void 0 : _l.call(displayInput, "role")) !== "searchbox") {
+        const selectedItem = (_b = selectWrapper.querySelector) == null ? void 0 : _b.call(
+          selectWrapper,
+          '.vue-treeselect__single-value, .vue-treeselect__value-container, .el-select__selected-item:not(.is-transparent), .el-select__tags-text, .ant-select-selection-item, .ant-select-selection-selected-value, .arco-select-view-value, .n-base-selection-label, .el-select-dropdown__item.is-selected, [class*="single-value"]'
+        );
+        if ((_c = selectedItem == null ? void 0 : selectedItem.textContent) == null ? void 0 : _c.trim()) {
+          const text = selectedItem.textContent.trim();
+          if (!text.includes("请选择") && !text.toLowerCase().includes("select")) {
+            return text;
+          }
+        }
+        const displayInput = element.tagName.toLowerCase() === "input" ? element : (_d = selectWrapper.querySelector) == null ? void 0 : _d.call(selectWrapper, "input");
+        const placeholder = (displayInput == null ? void 0 : displayInput.placeholder) || ((_e = selectWrapper.getAttribute) == null ? void 0 : _e.call(selectWrapper, "placeholder")) || ((_h = (_g = (_f = selectWrapper.querySelector) == null ? void 0 : _f.call(selectWrapper, '.el-select__placeholder, .ant-select-selection-placeholder, .vue-treeselect__placeholder, [class*="placeholder"]')) == null ? void 0 : _g.textContent) == null ? void 0 : _h.trim()) || "";
+        if ((displayInput == null ? void 0 : displayInput.value) && displayInput.value !== placeholder && !displayInput.value.includes("请选择") && !((_j = (_i = displayInput.classList) == null ? void 0 : _i.contains) == null ? void 0 : _j.call(_i, "vue-treeselect__input")) && !((_l = (_k = displayInput.classList) == null ? void 0 : _k.contains) == null ? void 0 : _l.call(_k, "ant-select-selection-search-input")) && ((_m = displayInput.getAttribute) == null ? void 0 : _m.call(displayInput, "role")) !== "searchbox") {
           return displayInput.value.trim();
         }
         return "";
@@ -1835,7 +1952,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
      * 执行单步填充
      */
     static async executeAssignment(assignment, snapshotId, mode = "empty_only") {
-      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
+      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E;
       const { fieldId, action, value, optionIds } = assignment;
       const element = FormDOMRegistry.get(fieldId, snapshotId);
       if (!element) {
@@ -1962,7 +2079,24 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
           }
           this.dispatchInputEvents(select);
         } else if (isCustomSelect) {
-          const targetOptionText = String(value ?? (optionIds == null ? void 0 : optionIds[0]) ?? "").trim();
+          const rawTargets = [];
+          if (assignment.values && Array.isArray(assignment.values) && assignment.values.length > 0) {
+            rawTargets.push(...assignment.values.map(String).filter(Boolean));
+          } else if (Array.isArray(value) && value.length > 0) {
+            rawTargets.push(...value.map(String).filter(Boolean));
+          } else if (typeof value === "string" && value.trim()) {
+            const strVal = value.trim();
+            if (strVal.includes(",") || strVal.includes("，") || strVal.includes("、")) {
+              rawTargets.push(...strVal.split(/[,，、]/).map((s) => s.trim()).filter(Boolean));
+            } else {
+              rawTargets.push(strVal);
+            }
+          } else if (optionIds && optionIds.length > 0) {
+            rawTargets.push(...optionIds.map(String).filter(Boolean));
+          }
+          if (rawTargets.length === 0) {
+            rawTargets.push("");
+          }
           let docCtx = element.ownerDocument;
           let rootNode = element;
           while (rootNode && (rootNode.parentElement || rootNode.parentNode)) {
@@ -1971,44 +2105,14 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
           if (!docCtx || typeof docCtx.querySelectorAll !== "function") {
             docCtx = typeof document !== "undefined" ? document : rootNode;
           }
-          const dispatchFullClick = (el) => {
-            var _a2;
-            try {
-              const rect = typeof el.getBoundingClientRect === "function" ? el.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
-              const clientX = rect.left + rect.width / 2;
-              const clientY = rect.top + rect.height / 2;
-              const eventInit = { bubbles: true, cancelable: true, composed: true, button: 0, view: typeof window !== "undefined" ? window : void 0, clientX, clientY };
-              if (typeof PointerEvent !== "undefined") {
-                el.dispatchEvent(new PointerEvent("pointerdown", { ...eventInit, buttons: 1, pointerType: "mouse", isPrimary: true }));
-              }
-              if (typeof MouseEvent !== "undefined") {
-                el.dispatchEvent(new MouseEvent("mousedown", { ...eventInit, buttons: 1 }));
-              }
-              if (typeof el.focus === "function") {
-                el.focus();
-              }
-              if (typeof PointerEvent !== "undefined") {
-                el.dispatchEvent(new PointerEvent("pointerup", { ...eventInit, buttons: 0, pointerType: "mouse", isPrimary: true }));
-              }
-              if (typeof MouseEvent !== "undefined") {
-                el.dispatchEvent(new MouseEvent("mouseup", eventInit));
-                el.dispatchEvent(new MouseEvent("click", eventInit));
-              } else if (typeof el.click === "function") {
-                el.click();
-              }
-            } catch {
-              try {
-                (_a2 = el.click) == null ? void 0 : _a2.call(el);
-              } catch {
-              }
-            }
-          };
           const trigger = ((_b = selectWrapper.querySelector) == null ? void 0 : _b.call(
             selectWrapper,
             ".el-select__wrapper, .vue-treeselect__control, .ant-select-selector, .arco-select-view, .n-base-selection, .select-trigger"
           )) || ((_c = selectWrapper.querySelector) == null ? void 0 : _c.call(selectWrapper, "input")) || selectWrapper;
-          if (((_d = trigger.getAttribute) == null ? void 0 : _d.call(trigger, "aria-expanded")) !== "true" && ((_e = selectWrapper.getAttribute) == null ? void 0 : _e.call(selectWrapper, "aria-expanded")) !== "true") dispatchFullClick(trigger);
-          await new Promise((resolve) => setTimeout(resolve, 80));
+          if (((_d = trigger.getAttribute) == null ? void 0 : _d.call(trigger, "aria-expanded")) !== "true" && ((_e = selectWrapper.getAttribute) == null ? void 0 : _e.call(selectWrapper, "aria-expanded")) !== "true") {
+            _FormExecutor.dispatchFullClick(trigger);
+          }
+          await new Promise((resolve) => setTimeout(resolve, 120));
           const optionSelectors = [
             ".el-select-dropdown__item:not(.is-disabled)",
             ".el-select-dropdown__option-item:not(.is-disabled)",
@@ -2035,109 +2139,206 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
             "option:not([disabled])"
           ].join(", ");
           const normalize = (text) => text.replace(/[\(（]\d+[\)）]/g, "").replace(/\s+/g, " ").trim();
-          const path = targetOptionText.split(/\s*(?:\/|>|→|\|)\s*/).filter(Boolean);
-          let level = 0;
-          let selected = false;
-          let searched = false;
-          let searchInputUsed = null;
-          let previousSearch = "";
-          let clearedTreeSearch = false;
           const hierarchySelectors = '.vue-treeselect, .el-tree-select, .el-cascader, .ant-tree-select, .ant-cascader, .arco-tree-select, .arco-cascader, .n-tree-select, .n-cascader, [aria-haspopup="tree"]';
-          const isHierarchical = (container) => {
-            var _a2, _b2, _c2, _d2;
-            return path.length > 1 || Boolean(((_a2 = selectWrapper.matches) == null ? void 0 : _a2.call(selectWrapper, hierarchySelectors)) || ((_b2 = selectWrapper.closest) == null ? void 0 : _b2.call(selectWrapper, hierarchySelectors)) || ((_c2 = selectWrapper.querySelector) == null ? void 0 : _c2.call(selectWrapper, "input.vue-treeselect__input")) || ((_d2 = container.querySelector) == null ? void 0 : _d2.call(container, '[role="tree"], [role="treeitem"], .el-tree-node, .vue-treeselect__option, .el-cascader-node, .ant-cascader-menu-item')));
-          };
-          let associatedMenuFound = false;
-          let visibleOptionCount = 0;
-          const expanded = /* @__PURE__ */ new WeakSet();
-          const deadline = Date.now() + 3500;
           const usable = (node) => {
-            var _a2, _b2, _c2, _d2, _e2;
-            for (let current = node; current; current = current.parentElement) {
-              const style = ((_b2 = (_a2 = current.ownerDocument) == null ? void 0 : _a2.defaultView) == null ? void 0 : _b2.getComputedStyle(current)) || current.style;
-              if (current.hidden || (style == null ? void 0 : style.display) === "none" || (style == null ? void 0 : style.visibility) === "hidden" || ((_c2 = current.getAttribute) == null ? void 0 : _c2.call(current, "aria-hidden")) === "true") return false;
+            var _a2, _b2, _c2, _d2, _e2, _f2, _g2, _h2, _i2, _j2, _k2, _l2, _m2, _n2;
+            if (!node) return false;
+            if (((_a2 = node.getAttribute) == null ? void 0 : _a2.call(node, "aria-disabled")) === "true" || ((_c2 = (_b2 = node.classList) == null ? void 0 : _b2.contains) == null ? void 0 : _c2.call(_b2, "is-disabled")) || ((_e2 = (_d2 = node.classList) == null ? void 0 : _d2.contains) == null ? void 0 : _e2.call(_d2, "ant-select-item-option-disabled")) || ((_g2 = (_f2 = node.classList) == null ? void 0 : _f2.contains) == null ? void 0 : _g2.call(_f2, "vue-treeselect__option--disabled")) || ((_i2 = (_h2 = node.classList) == null ? void 0 : _h2.contains) == null ? void 0 : _i2.call(_h2, "vue-treeselect__label--disabled")) || ((_j2 = node.hasAttribute) == null ? void 0 : _j2.call(node, "disabled"))) {
+              return false;
             }
-            return ((_d2 = node.getAttribute) == null ? void 0 : _d2.call(node, "aria-disabled")) !== "true" && !((_e2 = node.closest) == null ? void 0 : _e2.call(node, '[disabled], [aria-disabled="true"], .is-disabled, .ant-select-item-option-disabled'));
+            for (let current = node; current && current !== ((_k2 = current.ownerDocument) == null ? void 0 : _k2.body); current = current.parentElement) {
+              if (current.hidden) return false;
+              const style = ((_n2 = (_m2 = (_l2 = current.ownerDocument) == null ? void 0 : _l2.defaultView) == null ? void 0 : _m2.getComputedStyle) == null ? void 0 : _n2.call(_m2, current)) || current.style;
+              if ((style == null ? void 0 : style.display) === "none" || (style == null ? void 0 : style.visibility) === "hidden") return false;
+            }
+            return true;
           };
           const label = (node) => {
             var _a2, _b2;
             return (((_b2 = (_a2 = node.querySelector) == null ? void 0 : _a2.call(node, ".el-cascader-node__label, .ant-cascader-menu-item-content, .vue-treeselect__label, .el-tree-node__label, .ant-select-item-option-content")) == null ? void 0 : _b2.textContent) || node.textContent || "").trim();
           };
-          while (Date.now() < deadline && !this.isCancelled) {
-            const associated = FormScanner.findAssociatedDropdownContainer(element, selectWrapper, docCtx);
-            associatedMenuFound || (associatedMenuFound = Boolean(associated));
-            const container = associated || selectWrapper;
-            if (!clearedTreeSearch && isHierarchical(container)) {
-              clearedTreeSearch = true;
-              const treeSearch = (_f = selectWrapper.querySelector) == null ? void 0 : _f.call(selectWrapper, "input.vue-treeselect__input, input.el-select__input, input.ant-select-selection-search-input");
-              if ((treeSearch == null ? void 0 : treeSearch.value) && !treeSearch.readOnly) {
-                this.setNativeValue(treeSearch, "");
-                this.dispatchInputEvents(treeSearch);
+          const chosenLabels = [];
+          let associatedMenuFound = false;
+          let visibleOptionCount = 0;
+          for (const targetOptionText of rawTargets) {
+            const path = targetOptionText.split(/\s*(?:\/|>|→|\|)\s*/).filter(Boolean);
+            let level = 0;
+            let selected = false;
+            let searched = false;
+            let searchInputUsed = null;
+            let previousSearch = "";
+            let clearedTreeSearch = false;
+            const expanded = /* @__PURE__ */ new WeakSet();
+            const deadline = Date.now() + 3500;
+            const isHierarchical = (container) => {
+              var _a2, _b2, _c2, _d2;
+              return path.length > 1 || Boolean(((_a2 = selectWrapper.matches) == null ? void 0 : _a2.call(selectWrapper, hierarchySelectors)) || ((_b2 = selectWrapper.closest) == null ? void 0 : _b2.call(selectWrapper, hierarchySelectors)) || ((_c2 = selectWrapper.querySelector) == null ? void 0 : _c2.call(selectWrapper, "input.vue-treeselect__input")) || ((_d2 = container.querySelector) == null ? void 0 : _d2.call(container, '[role="tree"], [role="treeitem"], .el-tree-node, .vue-treeselect__option, .el-cascader-node, .ant-cascader-menu-item')));
+            };
+            while (Date.now() < deadline && !this.isCancelled) {
+              let associated = FormScanner.findAssociatedDropdownContainer(element, selectWrapper, docCtx);
+              if (!associated && (docCtx == null ? void 0 : docCtx.querySelectorAll)) {
+                const allVisible = Array.from(docCtx.querySelectorAll('.el-select-dropdown, .vue-treeselect__menu, .ant-select-dropdown, [class*="select-dropdown"]'));
+                associated = allVisible.find((p) => {
+                  var _a2, _b2;
+                  return p && !p.hidden && ((_a2 = p.style) == null ? void 0 : _a2.display) !== "none" && ((_b2 = p.style) == null ? void 0 : _b2.visibility) !== "hidden";
+                }) || null;
+              }
+              associatedMenuFound || (associatedMenuFound = Boolean(associated));
+              const container = associated || selectWrapper;
+              if (!clearedTreeSearch && isHierarchical(container)) {
+                clearedTreeSearch = true;
+                const treeSearch = (_f = selectWrapper.querySelector) == null ? void 0 : _f.call(selectWrapper, "input.vue-treeselect__input, input.el-select__input, input.ant-select-selection-search-input");
+                if ((treeSearch == null ? void 0 : treeSearch.value) && !treeSearch.readOnly) {
+                  this.setNativeValue(treeSearch, "");
+                  this.dispatchInputEvents(treeSearch);
+                  await new Promise((resolve) => setTimeout(resolve, 100));
+                  continue;
+                }
+              }
+              let options = Array.from(((_g = container.querySelectorAll) == null ? void 0 : _g.call(container, optionSelectors)) || []).filter(
+                (node) => {
+                  var _a2;
+                  return usable(node) && !((_a2 = node.querySelector) == null ? void 0 : _a2.call(node, '.el-select-dropdown__item, .el-tree-node__content, .vue-treeselect__option, [role="option"], [role="treeitem"]'));
+                }
+              );
+              visibleOptionCount = options.length;
+              if (searched && searchInputUsed && searchInputUsed.value && (options.length === 0 || Boolean((_h = container.querySelector) == null ? void 0 : _h.call(container, ".vue-treeselect__tip--no-results, .vue-treeselect__tip--empty, .el-select-dropdown__empty, .ant-empty")))) {
+                this.setNativeValue(searchInputUsed, "");
+                this.dispatchInputEvents(searchInputUsed);
                 await new Promise((resolve) => setTimeout(resolve, 100));
-                continue;
+                options = Array.from(((_i = container.querySelectorAll) == null ? void 0 : _i.call(container, optionSelectors)) || []).filter(
+                  (node) => {
+                    var _a2;
+                    return usable(node) && !((_a2 = node.querySelector) == null ? void 0 : _a2.call(node, '.el-select-dropdown__item, .el-tree-node__content, .vue-treeselect__option, [role="option"], [role="treeitem"]'));
+                  }
+                );
+                visibleOptionCount = options.length;
               }
-            }
-            const options = Array.from(((_g = container.querySelectorAll) == null ? void 0 : _g.call(container, optionSelectors)) || []).filter((node) => {
-              var _a2;
-              return usable(node) && !((_a2 = node.querySelector) == null ? void 0 : _a2.call(node, '.el-select-dropdown__item, .el-tree-node__content, .vue-treeselect__label, [role="option"]'));
-            });
-            visibleOptionCount = options.length;
-            const target = path[level] || targetOptionText;
-            const byId = options.filter((node) => {
-              var _a2, _b2;
-              return path.length <= 1 && (optionIds == null ? void 0 : optionIds.includes(node.id)) || (((_a2 = node.getAttribute) == null ? void 0 : _a2.call(node, "data-value")) ?? ((_b2 = node.getAttribute) == null ? void 0 : _b2.call(node, "value"))) === target;
-            });
-            const exact = options.filter((node) => label(node) === target);
-            const matches = byId.length ? byId : exact.length ? exact : options.filter((node) => normalize(label(node)) === normalize(target));
-            const matched = matches.length === 1 ? matches[0] : !target ? options.find((node) => label(node) && !label(node).includes("请选择")) : void 0;
-            if (matched) {
-              (_h = matched.scrollIntoView) == null ? void 0 : _h.call(matched, { block: "nearest" });
-              dispatchFullClick(matched);
-              if (level < path.length - 1) {
-                level++;
-                await new Promise((resolve) => setTimeout(resolve, 100));
-                continue;
+              const target = path[level] || targetOptionText;
+              let matched = options.find((node) => {
+                var _a2, _b2;
+                const val = ((_a2 = node.getAttribute) == null ? void 0 : _a2.call(node, "data-value")) ?? ((_b2 = node.getAttribute) == null ? void 0 : _b2.call(node, "value"));
+                return path.length <= 1 && (optionIds == null ? void 0 : optionIds.includes(node.id)) || val === target || label(node) === target;
+              });
+              if (!matched && target) {
+                matched = options.find((node) => normalize(label(node)) === normalize(target));
               }
-              targetSelectVal = label(matched);
-              selected = true;
-              break;
-            }
-            const arrows = Array.from(((_i = container.querySelectorAll) == null ? void 0 : _i.call(container, '.el-tree-node__expand-icon:not(.is-leaf):not(.expanded), .ant-select-tree-switcher_close, .vue-treeselect__option-arrow-container, [aria-expanded="false"] > .vue-treeselect__option-arrow')) || []);
-            if (path.length <= 1) {
-              for (const node of options) {
-                if ((_j = node.querySelector) == null ? void 0 : _j.call(node, ".el-cascader-node__postfix, .ant-cascader-menu-item-expand-icon, .arco-cascader-list-item-expand-icon")) arrows.push(node);
+              if (!matched && target) {
+                matched = options.find((node) => {
+                  const l = normalize(label(node));
+                  const t = normalize(target);
+                  return l && t && (l.includes(t) || t.includes(l));
+                });
               }
-            }
-            const arrow = arrows.find((node) => {
-              var _a2, _b2;
-              return usable(node) && !expanded.has(node) && !((_a2 = node.closest) == null ? void 0 : _a2.call(node, ".vue-treeselect__option--expanded")) && !((_b2 = node.querySelector) == null ? void 0 : _b2.call(node, ".vue-treeselect__option-arrow--rotated"));
-            });
-            if (arrow) {
-              expanded.add(arrow);
-              dispatchFullClick(arrow);
-            } else if (!searched && !isHierarchical(container) && target && value !== void 0) {
-              const search = (_k = selectWrapper.querySelector) == null ? void 0 : _k.call(selectWrapper, "input.vue-treeselect__input, input.el-select__input, input.ant-select-selection-search-input");
-              if (search && !search.readOnly) {
-                searchInputUsed = search;
-                previousSearch = search.value;
-                this.setNativeValue(search, target);
-                this.dispatchInputEvents(search);
+              if (!matched && target) {
+                if (target.includes("男")) {
+                  matched = options.find((node) => label(node).includes("男"));
+                } else if (target.includes("女")) {
+                  matched = options.find((node) => label(node).includes("女"));
+                }
               }
-              searched = true;
+              if (!matched && (!target || Date.now() > deadline - 800) && options.length > 0) {
+                matched = options.find((node) => {
+                  const l = label(node);
+                  return l && !l.includes("请选择") && !l.toLowerCase().includes("select") && l !== "--请选择--";
+                });
+              }
+              if (matched) {
+                (_j = matched.scrollIntoView) == null ? void 0 : _j.call(matched, { block: "nearest" });
+                const clickTarget = ((_k = matched.querySelector) == null ? void 0 : _k.call(
+                  matched,
+                  ".vue-treeselect__label-container, .vue-treeselect__label, .el-tree-node__content, .el-tree-node__label, .el-cascader-node__label, .ant-select-item-option-content, .ant-select-tree-node-content-wrapper, .ant-select-tree-title"
+                )) || matched;
+                _FormExecutor.dispatchFullClick(clickTarget);
+                if (clickTarget !== matched) {
+                  _FormExecutor.dispatchFullClick(matched);
+                }
+                if (level < path.length - 1) {
+                  level++;
+                  await new Promise((resolve) => setTimeout(resolve, 100));
+                  continue;
+                }
+                const chosen = label(matched);
+                chosenLabels.push(chosen);
+                selected = true;
+                break;
+              }
+              const arrows = Array.from(
+                ((_l = container.querySelectorAll) == null ? void 0 : _l.call(
+                  container,
+                  '.el-tree-node__expand-icon:not(.is-leaf):not(.expanded), .ant-select-tree-switcher_close, .vue-treeselect__option-arrow-container, [aria-expanded="false"] > .vue-treeselect__option-arrow'
+                )) || []
+              );
+              if (path.length <= 1) {
+                for (const node of options) {
+                  if ((_m = node.querySelector) == null ? void 0 : _m.call(node, ".el-cascader-node__postfix, .ant-cascader-menu-item-expand-icon, .arco-cascader-list-item-expand-icon")) {
+                    arrows.push(node);
+                  }
+                }
+              }
+              const arrow = arrows.find(
+                (node) => {
+                  var _a2, _b2;
+                  return usable(node) && !expanded.has(node) && !((_a2 = node.closest) == null ? void 0 : _a2.call(node, ".vue-treeselect__option--expanded")) && !((_b2 = node.querySelector) == null ? void 0 : _b2.call(node, ".vue-treeselect__option-arrow--rotated"));
+                }
+              );
+              if (arrow) {
+                expanded.add(arrow);
+                _FormExecutor.dispatchFullClick(arrow);
+                let waitLoading = 0;
+                while (waitLoading < 1500) {
+                  const isLoading = Boolean(
+                    (_n = container.querySelector) == null ? void 0 : _n.call(container, '.el-tree-node__loading-icon, .is-loading, .ant-select-tree-switcher-loading-icon, .arco-icon-loading, [aria-busy="true"]')
+                  );
+                  if (!isLoading && waitLoading > 100) break;
+                  await new Promise((r) => setTimeout(r, 60));
+                  waitLoading += 60;
+                }
+              } else if (!searched && target && value !== void 0 && !/^\d+$/.test(target)) {
+                const search = (_o = selectWrapper.querySelector) == null ? void 0 : _o.call(
+                  selectWrapper,
+                  "input.vue-treeselect__input, input.el-select__input, input.ant-select-selection-search-input"
+                );
+                if (search && !search.readOnly) {
+                  searchInputUsed = search;
+                  previousSearch = search.value;
+                  this.setNativeValue(search, target);
+                  this.dispatchInputEvents(search);
+                }
+                searched = true;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 100));
             }
-            await new Promise((resolve) => setTimeout(resolve, 100));
+            if (!selected && searchInputUsed && searchInputUsed.value !== previousSearch) {
+              this.setNativeValue(searchInputUsed, previousSearch);
+              this.dispatchInputEvents(searchInputUsed);
+            }
+            if (!selected) {
+              throw new Error(
+                `下拉选择失败：${associatedMenuFound ? "已找到浮层" : "未找到关联浮层"}；可用选项 ${visibleOptionCount} 项；目标「${targetOptionText}」未匹配。`
+              );
+            }
+            if (rawTargets.length > 1) {
+              await new Promise((r) => setTimeout(r, 80));
+            }
           }
-          if (!selected && searchInputUsed && searchInputUsed.value !== previousSearch) {
-            this.setNativeValue(searchInputUsed, previousSearch);
-            this.dispatchInputEvents(searchInputUsed);
+          if (rawTargets.length > 1 || ((_q = (_p = selectWrapper.classList) == null ? void 0 : _p.contains) == null ? void 0 : _q.call(_p, "is-multiple")) || ((_r = selectWrapper.querySelector) == null ? void 0 : _r.call(selectWrapper, ".el-select__tags"))) {
+            try {
+              const innerInput = element.tagName.toLowerCase() === "input" ? element : (_s = selectWrapper.querySelector) == null ? void 0 : _s.call(selectWrapper, "input");
+              if (typeof (innerInput == null ? void 0 : innerInput.blur) === "function") {
+                innerInput.blur();
+              }
+            } catch {
+            }
+            await new Promise((r) => setTimeout(r, 60));
           }
-          if (!selected) throw new Error(`下拉选择失败：${associatedMenuFound ? "已找到浮层" : "未找到关联浮层"}；可用选项 ${visibleOptionCount} 项；第 ${level + 1} 级目标「${path[level] || targetOptionText}」未匹配。`);
+          targetSelectVal = chosenLabels.join(", ");
           const verifyUntil = Date.now() + 1500;
           const expected = normalize(targetSelectVal);
           while (Date.now() < verifyUntil) {
             const actual = String(this.readElementValue(element)).trim();
-            const parts = actual.split(/\s*(?:\/|>|→)\s*/);
-            if (normalize(actual) === expected || path.length > 1 && parts.length === path.length && parts.every((part, index) => normalize(part) === normalize(path[index]))) {
+            const parts = actual.split(/\s*(?:\/|>|→|,|，)\s*/);
+            if (normalize(actual) === expected || rawTargets.every((t) => normalize(actual).includes(normalize(t))) || rawTargets.length === 1 && normalize(actual).includes(expected) || parts.some((part) => normalize(part) === expected)) {
               targetSelectVal = actual;
               break;
             }
@@ -2145,12 +2346,27 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
           }
         } else if (input.type === "radio" || fieldId.includes("_radiogroup_")) {
           const targetVal = String(value ?? (optionIds == null ? void 0 : optionIds[0]) ?? "").trim();
-          const optionNode = FormDOMRegistry.getOptionElement(fieldId, targetVal, snapshotId) || ((optionIds == null ? void 0 : optionIds[0]) ? FormDOMRegistry.getOptionElement(fieldId, optionIds[0], snapshotId) : null);
-          targetRadio = ((_l = optionNode == null ? void 0 : optionNode.querySelector) == null ? void 0 : _l.call(optionNode, 'input[type="radio"]')) || ((optionNode == null ? void 0 : optionNode.tagName) === "INPUT" ? optionNode : null);
-          if (!targetRadio || targetRadio.disabled || targetRadio.isConnected === false) {
-            throw new Error("单选目标不存在、已失效或被禁用");
+          let optionNode = FormDOMRegistry.getOptionElement(fieldId, targetVal, snapshotId) || ((optionIds == null ? void 0 : optionIds[0]) ? FormDOMRegistry.getOptionElement(fieldId, optionIds[0], snapshotId) : null);
+          if (!optionNode || typeof optionNode.isConnected === "boolean" && !optionNode.isConnected) {
+            const radioContainer = ((_t = element.closest) == null ? void 0 : _t.call(element, '.el-radio-group, .ant-radio-group, [role="radiogroup"], .el-form-item, .ant-form-item, form')) || element.parentElement || element;
+            const labels = Array.from(((_u = radioContainer.querySelectorAll) == null ? void 0 : _u.call(radioContainer, 'label, .el-radio, .ant-radio, .arco-radio, [role="radio"]')) || []);
+            optionNode = labels.find((l) => {
+              var _a2;
+              return (((_a2 = l.textContent) == null ? void 0 : _a2.trim()) || "").includes(targetVal);
+            }) || null;
           }
-          optionNode.click();
+          if (!optionNode) {
+            throw new Error(`单选目标「${targetVal}」不存在、已失效或被禁用`);
+          }
+          targetRadio = ((_v = optionNode.querySelector) == null ? void 0 : _v.call(optionNode, 'input[type="radio"], input')) || (optionNode.tagName === "INPUT" ? optionNode : null);
+          if (targetRadio && targetRadio.disabled) {
+            throw new Error(`单选目标「${targetVal}」处于禁用状态`);
+          }
+          _FormExecutor.dispatchFullClick(optionNode);
+          if (targetRadio && !targetRadio.checked) {
+            targetRadio.checked = true;
+            this.dispatchInputEvents(targetRadio);
+          }
         } else if (input.type === "checkbox") {
           const targetChecked = this.toStrictBoolean(value);
           if (input.checked !== targetChecked) {
@@ -2181,9 +2397,15 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         if (tag === "select") {
           isMatched = String(appliedValue) === targetSelectVal;
         } else if (isCustomSelect) {
-          isMatched = Boolean(targetSelectVal) && String(appliedValue).trim() === targetSelectVal.trim();
+          const actualStr = String(appliedValue).trim();
+          const expectedStr = String(targetSelectVal).trim();
+          const normalize = (text) => text.replace(/[\(（]\d+[\)）]/g, "").replace(/\s+/g, " ").trim();
+          const rawTargets = Array.isArray(value) ? value.map(String) : String(value ?? (optionIds == null ? void 0 : optionIds[0]) ?? "").split(/[,，、]/).map((s) => s.trim()).filter(Boolean);
+          isMatched = Boolean(targetSelectVal) && Boolean(actualStr) && (actualStr === expectedStr || normalize(actualStr) === normalize(expectedStr) || actualStr.includes(expectedStr) || expectedStr.includes(actualStr) || normalize(actualStr).includes(normalize(expectedStr)) || normalize(expectedStr).includes(normalize(actualStr)) || rawTargets.length > 0 && rawTargets.every((t) => normalize(actualStr).includes(normalize(t))));
         } else if (input.type === "radio" || fieldId.includes("_radiogroup_")) {
-          isMatched = (targetRadio == null ? void 0 : targetRadio.checked) === true;
+          isMatched = (targetRadio == null ? void 0 : targetRadio.checked) === true || Boolean(
+            ((_x = (_w = element == null ? void 0 : element.classList) == null ? void 0 : _w.contains) == null ? void 0 : _x.call(_w, "is-checked")) || ((_A = (_z = (_y = targetRadio == null ? void 0 : targetRadio.parentElement) == null ? void 0 : _y.classList) == null ? void 0 : _z.contains) == null ? void 0 : _A.call(_z, "is-checked")) || ((_E = (_D = (_C = (_B = targetRadio == null ? void 0 : targetRadio.closest) == null ? void 0 : _B.call(targetRadio, "label, .el-radio, .ant-radio")) == null ? void 0 : _C.classList) == null ? void 0 : _D.contains) == null ? void 0 : _E.call(_D, "is-checked"))
+          );
         } else if (input.type === "checkbox") {
           isMatched = appliedValue === this.toStrictBoolean(value);
         } else if (input.type === "number") {
@@ -2403,11 +2625,12 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         conflictCount
       };
     }
-  }
-  __publicField(FormExecutor, "isCancelled", false);
-  __publicField(FormExecutor, "activeRunId", null);
+  };
+  __publicField(_FormExecutor, "isCancelled", false);
+  __publicField(_FormExecutor, "activeRunId", null);
   // 历史运行记录缓存（用于撤销）
-  __publicField(FormExecutor, "runHistory", /* @__PURE__ */ new Map());
+  __publicField(_FormExecutor, "runHistory", /* @__PURE__ */ new Map());
+  let FormExecutor = _FormExecutor;
   class QuickLoginExecutor {
     /**
      * 判断元素是否在页面中可见
@@ -2636,8 +2859,1107 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       }
     }
   }
+  let hudContainer = null;
+  let dismissTimer = null;
+  function getOrCreateHudContainer() {
+    if (hudContainer && document.documentElement.contains(hudContainer)) {
+      return hudContainer;
+    }
+    hudContainer = document.createElement("div");
+    hudContainer.dataset.qaCopilotRoot = "true";
+    hudContainer.dataset.qaCopilotHud = "true";
+    Object.assign(hudContainer.style, {
+      position: "fixed",
+      top: "20px",
+      right: "24px",
+      zIndex: "2147483646",
+      maxWidth: "420px",
+      minWidth: "280px",
+      boxSizing: "border-box",
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+      fontSize: "13px",
+      lineHeight: "1.4",
+      pointerEvents: "auto",
+      transition: "all 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
+      transform: "translateY(-10px)",
+      opacity: "0"
+    });
+    document.documentElement.appendChild(hudContainer);
+    requestAnimationFrame(() => {
+      if (hudContainer) {
+        hudContainer.style.transform = "translateY(0)";
+        hudContainer.style.opacity = "1";
+      }
+    });
+    return hudContainer;
+  }
+  function dismissTestHud(instant = false) {
+    if (dismissTimer) {
+      clearTimeout(dismissTimer);
+      dismissTimer = null;
+    }
+    if (!hudContainer) return;
+    if (instant) {
+      hudContainer.remove();
+      hudContainer = null;
+      return;
+    }
+    hudContainer.style.transform = "translateY(-10px)";
+    hudContainer.style.opacity = "0";
+    setTimeout(() => {
+      hudContainer == null ? void 0 : hudContainer.remove();
+      hudContainer = null;
+    }, 250);
+  }
+  function updateTestHud(payload) {
+    if (window !== window.top) return;
+    if (dismissTimer) {
+      clearTimeout(dismissTimer);
+      dismissTimer = null;
+    }
+    const container = getOrCreateHudContainer();
+    const { status, title, stepTitle, stepIndex, totalSteps, detail, reason, error } = payload;
+    let theme = {
+      bg: "#ffffff",
+      border: "#e2e8f0",
+      titleColor: "#0f172a",
+      iconHtml: "",
+      badgeHtml: ""
+    };
+    if (status === "running") {
+      theme = {
+        bg: "rgba(255, 255, 255, 0.95)",
+        border: "#c7d2fe",
+        titleColor: "#312e81",
+        badgeBg: "#e0e7ff",
+        badgeText: "#4338ca",
+        iconHtml: `
+        <svg style="width: 18px; height: 18px; animation: spin 1s linear infinite; color: #4f46e5; shrink-0;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle>
+          <path d="M12 2a10 10 0 0 1 10 10"></path>
+        </svg>
+      `,
+        badgeHtml: `<span style="background: #e0e7ff; color: #4338ca; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 9999px;">执行中${totalSteps ? ` · ${Math.min((stepIndex ?? 0) + 1, totalSteps)}/${totalSteps}步` : ""}</span>`
+      };
+    } else if (status === "passed") {
+      theme = {
+        bg: "#f0fdf4",
+        border: "#86efac",
+        titleColor: "#14532d",
+        badgeBg: "#dcfce7",
+        badgeText: "#15803d",
+        iconHtml: `
+        <svg style="width: 20px; height: 20px; color: #16a34a; shrink-0;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+          <polyline points="22 4 12 14.01 9 11.01"></polyline>
+        </svg>
+      `,
+        badgeHtml: `<span style="background: #22c55e; color: #ffffff; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 9999px; letter-spacing: 0.5px;">✓ PASS 测试通过</span>`
+      };
+      dismissTimer = setTimeout(() => dismissTestHud(), 7e3);
+    } else if (status === "failed") {
+      theme = {
+        bg: "#fff1f2",
+        border: "#fca5a5",
+        titleColor: "#881337",
+        badgeBg: "#fee2e2",
+        badgeText: "#b91c1c",
+        iconHtml: `
+        <svg style="width: 20px; height: 20px; color: #e11d48; shrink-0;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="15" y1="9" x2="9" y2="15"></line>
+          <line x1="9" y1="9" x2="15" y2="15"></line>
+        </svg>
+      `,
+        badgeHtml: `<span style="background: #e11d48; color: #ffffff; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 9999px; letter-spacing: 0.5px;">✕ FAIL 测试未通过</span>`
+      };
+      dismissTimer = setTimeout(() => dismissTestHud(), 12e3);
+    } else if (status === "cancelled") {
+      theme = {
+        bg: "#f8fafc",
+        border: "#cbd5e1",
+        titleColor: "#334155",
+        badgeBg: "#f1f5f9",
+        badgeText: "#64748b",
+        iconHtml: `
+        <svg style="width: 18px; height: 18px; color: #64748b; shrink-0;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line>
+        </svg>
+      `,
+        badgeHtml: `<span style="background: #e2e8f0; color: #475569; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 9999px;">已取消</span>`
+      };
+      dismissTimer = setTimeout(() => dismissTestHud(), 3500);
+    }
+    const heading = title || (status === "passed" ? "测试通过" : status === "failed" ? "测试失败" : "自然语言自动化测试");
+    const mainReason = reason || error || "";
+    const currentStepInfo = stepTitle ? `<div style="font-size: 12px; color: #475569; margin-top: 4px; word-break: break-all;"><strong>当前步骤：</strong>${stepTitle}</div>` : "";
+    const detailInfo = detail ? `<div style="font-size: 11px; color: #64748b; margin-top: 3px; word-break: break-all; opacity: 0.9;">${detail}</div>` : "";
+    const reasonInfo = mainReason ? `
+    <div style="margin-top: 6px; padding: 6px 9px; background: rgba(0, 0, 0, 0.04); border-radius: 6px; font-size: 11px; line-height: 1.45; color: ${status === "failed" ? "#9f1239" : status === "passed" ? "#166534" : "#334155"}; word-break: break-all;">
+      <strong>${status === "failed" ? "原因说明：" : status === "passed" ? "验证依据：" : "说明："}</strong>${mainReason}
+    </div>
+  ` : "";
+    container.innerHTML = `
+    <style>
+      @keyframes spin { 100% { transform: rotate(360deg); } }
+    </style>
+    <div style="background: ${theme.bg}; border: 1px solid ${theme.border}; border-radius: 12px; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.12), 0 8px 10px -6px rgba(0, 0, 0, 0.08); padding: 12px 14px; backdrop-filter: blur(8px);">
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+          ${theme.iconHtml}
+          <span style="font-size: 13px; font-weight: 700; color: ${theme.titleColor}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+            ${heading}
+          </span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 6px;">
+          ${theme.badgeHtml}
+          <button id="qa-copilot-hud-close" style="background: none; border: none; padding: 2px 4px; cursor: pointer; color: #94a3b8; font-size: 14px; line-height: 1; border-radius: 4px;">✕</button>
+        </div>
+      </div>
+      ${currentStepInfo}
+      ${detailInfo}
+      ${reasonInfo}
+    </div>
+  `;
+    const closeBtn = container.querySelector("#qa-copilot-hud-close");
+    if (closeBtn) {
+      closeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        dismissTestHud();
+      });
+    }
+  }
+  const ZENTAO_AUTOFILL_STORAGE_KEY = "zentao_pending_autofill";
+  const ZENTAO_PENDING_ATTACHMENT_KEY = "zentao_pending_attachment";
+  function dataUrlToFile(dataUrl, fileName) {
+    try {
+      const [header, base64] = dataUrl.split(",", 2);
+      if (!base64) return null;
+      const mimeMatch = header.match(/^data:([^;]+)/);
+      const mimeType = mimeMatch ? mimeMatch[1] : "image/png";
+      const binary = atob(base64);
+      const array = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        array[i] = binary.charCodeAt(i);
+      }
+      return new File([array], fileName, { type: mimeType });
+    } catch {
+      return null;
+    }
+  }
+  class ZentaoFillExecutor {
+    static resetStateForTesting() {
+      var _a;
+      this.hasFilled = false;
+      (_a = this.observer) == null ? void 0 : _a.disconnect();
+      this.observer = null;
+    }
+    /**
+     * 检查当前页面是否为 Bug 详情页
+     */
+    static isZentaoBugViewPage() {
+      if (typeof window === "undefined" || !window.location) return false;
+      const url = window.location.href || "";
+      const isUrlMatch = url.includes("bug-view") || url.includes("m=bug") && url.includes("f=view") || /bug.*view/i.test(url) || /\/bug\/(?:view|detail)\/\d+/i.test(url);
+      if (isUrlMatch) return true;
+      if (typeof document !== "undefined" && typeof document.querySelector === "function") {
+        try {
+          const hasDetailLayout = Boolean(
+            document.querySelector(".detail-title, .bug-title, #mainContent .detail, #legendBasicInfo, #mainContent .main-col")
+          );
+          if (hasDetailLayout && this.getBugIdFromViewPage() !== null) {
+            return true;
+          }
+        } catch {
+        }
+      }
+      return false;
+    }
+    /**
+     * 从详情页 URL 或 DOM 提取 Bug ID
+     */
+    static getBugIdFromViewPage() {
+      if (typeof window === "undefined" || !window.location) return null;
+      const url = window.location.href || "";
+      const m1 = url.match(/bug-view-(\d+)/i);
+      if (m1) return Number(m1[1]);
+      const m2 = url.match(/[?&](?:bugID|id|bug)=(\d+)/i);
+      if (m2) return Number(m2[1]);
+      const m3 = url.match(/\/bug\/(?:view|detail)\/(\d+)/i);
+      if (m3) return Number(m3[1]);
+      const m4 = url.match(/bug-(\d+)\.html/i);
+      if (m4) return Number(m4[1]);
+      if (typeof document !== "undefined" && typeof document.querySelector === "function") {
+        try {
+          const idInput = document.querySelector('input[name="bugID"], input[name="bug"], input[name="id"]');
+          if (idInput && idInput.value && /^\d+$/.test(idInput.value)) {
+            return Number(idInput.value);
+          }
+          const labelId = document.querySelector(".label-id, .prefix, .bug-id, span[data-id]");
+          if (labelId && labelId.textContent) {
+            const match = labelId.textContent.match(/#?(\d+)/);
+            if (match) return Number(match[1]);
+          }
+        } catch {
+        }
+      }
+      return null;
+    }
+    /**
+     * 检查当前环境是否包含禅道提 Bug 表单
+     */
+    static isZentaoCreateBugPage() {
+      if (typeof window === "undefined" || !window.location) return false;
+      const url = window.location.href || "";
+      const isUrlMatch = url.includes("bug-create") || url.includes("m=bug&f=create") || /bug.*create/i.test(url);
+      if (isUrlMatch) return true;
+      if (typeof document !== "undefined" && typeof document.querySelector === "function") {
+        try {
+          const hasBugForm = Boolean(
+            document.querySelector("form#dataform") || document.querySelector('form[action*="bug-create"]') || document.querySelector('form[action*="f=create"]')
+          );
+          const hasTitleAndSteps = Boolean(
+            document.querySelector('input#title, input[name="title"]') && (document.querySelector('textarea#steps, textarea[name="steps"]') || document.querySelector(".ke-container, .editor, iframe.ke-edit-iframe"))
+          );
+          return hasBugForm || hasTitleAndSteps;
+        } catch {
+        }
+      }
+      return false;
+    }
+    /**
+     * 检查并执行自动填写或附件挂载
+     */
+    static async checkAndExecute() {
+      if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) {
+        return false;
+      }
+      if (this.hasFilled) {
+        return false;
+      }
+      if (this.isZentaoBugViewPage()) {
+        return this.checkAndAttachOnBugViewPage();
+      }
+      let pendingData;
+      try {
+        const getRes = chrome.storage.local.get(ZENTAO_AUTOFILL_STORAGE_KEY);
+        const res = typeof (getRes == null ? void 0 : getRes.then) === "function" ? await getRes : await new Promise((resolve) => chrome.storage.local.get(ZENTAO_AUTOFILL_STORAGE_KEY, resolve));
+        pendingData = res == null ? void 0 : res[ZENTAO_AUTOFILL_STORAGE_KEY];
+      } catch {
+        return false;
+      }
+      if (!pendingData) {
+        return false;
+      }
+      if (Date.now() - pendingData.createdAt > 10 * 60 * 1e3) {
+        try {
+          chrome.storage.local.remove(ZENTAO_AUTOFILL_STORAGE_KEY);
+        } catch {
+        }
+        return false;
+      }
+      console.log("[QA Copilot] 探测到待填写的禅道 Bug 任务:", pendingData.title);
+      if (this.isZentaoCreateBugPage()) {
+        return this.fillFormWithRetry(pendingData);
+      }
+      if (this.isLikelyZentaoSite()) {
+        this.showFloatingHelper(pendingData);
+        this.setupDomWatcher(pendingData);
+      }
+      return false;
+    }
+    /**
+     * 外部或消息主动触发填写
+     */
+    static async executeWithData(data) {
+      if (!data) return false;
+      console.log("[QA Copilot] 接收到主动触发的禅道填单指令:", data.title);
+      return this.fillFormWithRetry(data);
+    }
+    /**
+     * 判断是否属于禅道相关页面
+     */
+    static isLikelyZentaoSite() {
+      var _a;
+      if (typeof window === "undefined" || !window.location) return false;
+      const url = window.location.href || "";
+      const title = typeof document !== "undefined" && typeof document.title === "string" ? document.title : "";
+      if (url.includes("zentao") || title.includes("禅道") || ((_a = window.config) == null ? void 0 : _a.version)) {
+        return true;
+      }
+      if (typeof document !== "undefined" && typeof document.querySelector === "function") {
+        try {
+          return Boolean(document.querySelector("#mainMenu, #navbar, .navbar-nav, #userNav, .user-name"));
+        } catch {
+        }
+      }
+      return false;
+    }
+    /**
+     * 监听 DOM 树变化，针对 SPA 路由延迟加载提单表单场景进行自愈补填
+     */
+    static setupDomWatcher(data) {
+      if (this.observer) return;
+      let elapsedMs = 0;
+      const interval = 500;
+      const timer = setInterval(() => {
+        var _a, _b;
+        elapsedMs += interval;
+        if (this.hasFilled || elapsedMs >= 2e4) {
+          clearInterval(timer);
+          (_a = this.observer) == null ? void 0 : _a.disconnect();
+          this.observer = null;
+          return;
+        }
+        if (this.isZentaoCreateBugPage()) {
+          clearInterval(timer);
+          (_b = this.observer) == null ? void 0 : _b.disconnect();
+          this.observer = null;
+          void this.fillFormWithRetry(data);
+        }
+      }, interval);
+      try {
+        this.observer = new MutationObserver(() => {
+          var _a;
+          if (!this.hasFilled && this.isZentaoCreateBugPage()) {
+            clearInterval(timer);
+            (_a = this.observer) == null ? void 0 : _a.disconnect();
+            this.observer = null;
+            void this.fillFormWithRetry(data);
+          }
+        });
+        this.observer.observe(document.body || document.documentElement, {
+          childList: true,
+          subtree: true
+        });
+      } catch {
+      }
+    }
+    /**
+     * 轮询重试直到富文本编辑器和各字段就绪并成功注入
+     */
+    static fillFormWithRetry(data) {
+      return new Promise((resolve) => {
+        let attempts = 0;
+        const maxAttempts = 30;
+        const timer = setInterval(async () => {
+          var _a, _b, _c, _d, _e, _f;
+          attempts++;
+          const titleInput = this.findTitleInput();
+          const hasEditor = this.hasEditorReady();
+          if (titleInput && hasEditor || attempts >= maxAttempts) {
+            clearInterval(timer);
+            const success = this.applyFields(data);
+            if (success) {
+              this.hasFilled = true;
+              try {
+                (_c = (_b = (_a = chrome.storage) == null ? void 0 : _a.local) == null ? void 0 : _b.remove) == null ? void 0 : _c.call(_b, ZENTAO_AUTOFILL_STORAGE_KEY);
+              } catch {
+              }
+              this.showSuccessBanner(data);
+              this.removeFloatingHelper();
+              resolve(true);
+              return;
+            }
+            if (window === window.top) {
+              const childSuccess = this.tryFillChildIframes(data);
+              if (childSuccess) {
+                this.hasFilled = true;
+                try {
+                  (_f = (_e = (_d = chrome.storage) == null ? void 0 : _d.local) == null ? void 0 : _e.remove) == null ? void 0 : _f.call(_e, ZENTAO_AUTOFILL_STORAGE_KEY);
+                } catch {
+                }
+                this.showSuccessBanner(data);
+                this.removeFloatingHelper();
+                resolve(true);
+                return;
+              }
+            }
+            this.showFloatingHelper(data);
+            resolve(false);
+          }
+        }, 200);
+      });
+    }
+    /**
+     * 寻找标题输入框
+     */
+    static findTitleInput(doc = document) {
+      return doc.querySelector(
+        'input#title, input[name="title"], input[id*="title"], [name*="title"] input'
+      );
+    }
+    /**
+     * 检查编辑器是否就绪
+     */
+    static hasEditorReady(doc = document) {
+      var _a, _b;
+      return Boolean(
+        doc.querySelector("iframe.ke-edit-iframe") || ((_b = (_a = window.KindEditor) == null ? void 0 : _a.instances) == null ? void 0 : _b.length) > 0 || doc.querySelector('textarea#steps, textarea[name="steps"]') || doc.querySelector(".ke-container, .editor")
+      );
+    }
+    /**
+     * 穿透子 iframe 尝试注入
+     */
+    static tryFillChildIframes(data) {
+      var _a;
+      try {
+        const iframes = Array.from(document.querySelectorAll("iframe"));
+        for (const iframe of iframes) {
+          try {
+            const doc = iframe.contentDocument || ((_a = iframe.contentWindow) == null ? void 0 : _a.document);
+            if (doc) {
+              const titleInput = this.findTitleInput(doc);
+              if (titleInput) {
+                return this.applyFields(data, doc, iframe.contentWindow);
+              }
+            }
+          } catch {
+          }
+        }
+      } catch {
+      }
+      return false;
+    }
+    /**
+     * 填充具体表单项
+     */
+    static applyFields(data, doc = document, win = window) {
+      let filledCount = 0;
+      const titleInput = this.findTitleInput(doc);
+      if (titleInput && data.title) {
+        titleInput.value = data.title;
+        titleInput.dispatchEvent(new Event("input", { bubbles: true }));
+        titleInput.dispatchEvent(new Event("change", { bubbles: true }));
+        filledCount++;
+      }
+      const severitySelect = doc.querySelector('select#severity, select[name="severity"]');
+      if (severitySelect && data.severity) {
+        severitySelect.value = String(data.severity);
+        severitySelect.dispatchEvent(new Event("change", { bubbles: true }));
+        this.triggerChosenUpdate(severitySelect, win);
+        filledCount++;
+      }
+      const priSelect = doc.querySelector('select#pri, select[name="pri"]');
+      if (priSelect && data.pri) {
+        priSelect.value = String(data.pri);
+        priSelect.dispatchEvent(new Event("change", { bubbles: true }));
+        this.triggerChosenUpdate(priSelect, win);
+        filledCount++;
+      }
+      if (data.assignedTo) {
+        const assignedSelect = doc.querySelector('select#assignedTo, select[name="assignedTo"]');
+        if (assignedSelect) {
+          const targetVal = data.assignedTo.trim();
+          const matchedOpt = Array.from(assignedSelect.options).find(
+            (opt) => opt.value === targetVal || opt.text.toLowerCase().includes(targetVal.toLowerCase())
+          );
+          if (matchedOpt) {
+            assignedSelect.value = matchedOpt.value;
+            assignedSelect.dispatchEvent(new Event("change", { bubbles: true }));
+            this.triggerChosenUpdate(assignedSelect, win);
+            filledCount++;
+          }
+        }
+      }
+      if (data.openedBuild) {
+        const buildSelect = doc.querySelector('select#openedBuild, select[name="openedBuild[]"]');
+        if (buildSelect) {
+          const matched = Array.from(buildSelect.options).find((opt) => opt.value === data.openedBuild);
+          if (matched) {
+            buildSelect.value = matched.value;
+            buildSelect.dispatchEvent(new Event("change", { bubbles: true }));
+            this.triggerChosenUpdate(buildSelect, win);
+          }
+        }
+      }
+      const injectedRich = this.injectRichText(data.stepsHtml, doc, win);
+      if (injectedRich) filledCount++;
+      if (data.screenshotUrl) {
+        this.attachScreenshotFile(data.screenshotUrl, data.bugId, doc);
+      }
+      return filledCount > 0;
+    }
+    /**
+     * 向富文本编辑器注入 HTML
+     */
+    static injectRichText(htmlContent, doc = document, win = window) {
+      let success = false;
+      try {
+        if (win.KindEditor && Array.isArray(win.KindEditor.instances)) {
+          win.KindEditor.instances.forEach((inst) => {
+            if (inst && typeof inst.html === "function") {
+              inst.html(htmlContent);
+              if (typeof inst.sync === "function") inst.sync();
+              success = true;
+            }
+          });
+        }
+        if (win.editor && typeof win.editor.html === "function") {
+          win.editor.html(htmlContent);
+          if (typeof win.editor.sync === "function") win.editor.sync();
+          success = true;
+        }
+      } catch {
+      }
+      const iframes = Array.from(doc.querySelectorAll('iframe.ke-edit-iframe, iframe[class*="editor"]'));
+      iframes.forEach((iframe) => {
+        var _a;
+        try {
+          const iframeDoc = iframe.contentDocument || ((_a = iframe.contentWindow) == null ? void 0 : _a.document);
+          if (iframeDoc && iframeDoc.body) {
+            iframeDoc.body.innerHTML = htmlContent;
+            iframeDoc.body.dispatchEvent(new Event("input", { bubbles: true }));
+            success = true;
+          }
+        } catch {
+        }
+      });
+      const textareas = Array.from(doc.querySelectorAll('textarea#steps, textarea[name="steps"]'));
+      textareas.forEach((ta) => {
+        ta.value = htmlContent;
+        ta.dispatchEvent(new Event("input", { bubbles: true }));
+        ta.dispatchEvent(new Event("change", { bubbles: true }));
+        success = true;
+      });
+      return success;
+    }
+    /**
+     * 自动将 Base64 截图装配到页面的文件上传域
+     */
+    static attachScreenshotFile(dataUrl, bugId, doc = document) {
+      const file = dataUrlToFile(dataUrl, `qa-screenshot-${bugId || Date.now()}.png`);
+      if (!file) return;
+      const fileInputs = Array.from(
+        doc.querySelectorAll('input[type="file"][name*="files"], input[type="file"][name*="file"], input[type="file"]')
+      );
+      if (fileInputs.length === 0) return;
+      for (const input of fileInputs) {
+        try {
+          const dt = new DataTransfer();
+          dt.items.add(file);
+          input.files = dt.files;
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          console.log("[QA Copilot] 已成功通过 DataTransfer 装配截图附件:", file.name);
+          break;
+        } catch (err) {
+          console.warn("[QA Copilot] 装配截图附件出现异常:", err);
+        }
+      }
+    }
+    /**
+     * 触发 Chosen 下拉刷新
+     */
+    static triggerChosenUpdate(selectEl, win = window) {
+      try {
+        if (win.$ && typeof win.$(selectEl).trigger === "function") {
+          win.$(selectEl).trigger("chosen:updated");
+        }
+      } catch {
+      }
+    }
+    /**
+     * 在页面顶部展示美观的操作横幅
+     */
+    static showSuccessBanner(data) {
+      var _a, _b;
+      const existing = document.getElementById("qa-copilot-zentao-banner");
+      if (existing) existing.remove();
+      const banner = document.createElement("div");
+      banner.id = "qa-copilot-zentao-banner";
+      banner.style.cssText = `
+      position: fixed;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 999999;
+      background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+      color: #ffffff;
+      padding: 10px 18px;
+      border-radius: 10px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 13px;
+      animation: qaSlideDown 0.3s ease-out;
+    `;
+      const hasScreenshot = Boolean(data.screenshotUrl);
+      banner.innerHTML = `
+      <style>
+        @keyframes qaSlideDown {
+          from { opacity: 0; transform: translate(-50%, -20px); }
+          to { opacity: 1; transform: translate(-50%, 0); }
+        }
+      </style>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span style="font-size: 18px;">🎉</span>
+        <div>
+          <strong style="font-weight: 700;">QA Copilot 自动化填单完成！</strong>
+          <span style="opacity: 0.95; font-size: 12px; margin-left: 4px;">
+            标题、排版步骤${hasScreenshot ? "与现场截图附件" : ""}已全部自动就位。
+          </span>
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <button id="qa-zentao-auto-submit" style="
+          background: #ffffff;
+          color: #065f46;
+          border: none;
+          padding: 5px 12px;
+          border-radius: 6px;
+          font-weight: 700;
+          font-size: 12px;
+          cursor: pointer;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+          transition: all 0.2s;
+        ">立刻帮我提交</button>
+        <button id="qa-zentao-banner-close" style="
+          background: rgba(255,255,255,0.2);
+          color: #ffffff;
+          border: none;
+          padding: 5px 10px;
+          border-radius: 6px;
+          font-size: 12px;
+          cursor: pointer;
+        ">我来核对</button>
+      </div>
+    `;
+      document.body.appendChild(banner);
+      const submitBtn = (_a = banner.querySelector) == null ? void 0 : _a.call(banner, "#qa-zentao-auto-submit");
+      submitBtn == null ? void 0 : submitBtn.addEventListener("click", () => {
+        this.injectRichText(data.stepsHtml);
+        const pageSubmit = document.querySelector(
+          '#submit, button#submit, input#submit, form#dataform button[type="submit"], form#dataform input[type="submit"]'
+        );
+        if (pageSubmit) {
+          pageSubmit.click();
+          banner.remove();
+        } else {
+          alert("未找到页面的保存按钮，请手动点击页面下方的“保存”提交");
+        }
+      });
+      const closeBtn = (_b = banner.querySelector) == null ? void 0 : _b.call(banner, "#qa-zentao-banner-close");
+      closeBtn == null ? void 0 : closeBtn.addEventListener("click", () => {
+        banner.remove();
+      });
+    }
+    /**
+     * 在页面右下角显示常驻的悬浮助手胶囊，确保用户任何情况下都能一键填入
+     */
+    static showFloatingHelper(data) {
+      if (this.hasFilled) return;
+      const existing = document.getElementById("qa-copilot-floating-helper");
+      if (existing) return;
+      const widget = document.createElement("div");
+      widget.id = "qa-copilot-floating-helper";
+      widget.style.cssText = `
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 999998;
+      background: #1e293b;
+      color: #ffffff;
+      padding: 10px 14px;
+      border-radius: 12px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255,255,255,0.1);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 12px;
+      max-width: 380px;
+      cursor: default;
+    `;
+      const cleanTitle = data.title.length > 20 ? `${data.title.slice(0, 20)}…` : data.title;
+      widget.innerHTML = `
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span style="font-size: 16px;">🚀</span>
+        <div>
+          <div style="font-weight: 700; color: #38bdf8;">QA Copilot 待填 Bug</div>
+          <div style="color: #cbd5e1; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px;">${cleanTitle}</div>
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <button id="qa-btn-manual-fill" style="
+          background: #2563eb;
+          color: #ffffff;
+          border: none;
+          padding: 5px 10px;
+          border-radius: 6px;
+          font-weight: 600;
+          font-size: 11px;
+          cursor: pointer;
+          white-space: nowrap;
+        ">一键填入</button>
+        <button id="qa-btn-floating-dismiss" style="
+          background: transparent;
+          color: #94a3b8;
+          border: none;
+          padding: 4px;
+          cursor: pointer;
+          font-size: 14px;
+          line-height: 1;
+        ">✕</button>
+      </div>
+    `;
+      document.body.appendChild(widget);
+      const fillBtn = widget.querySelector("#qa-btn-manual-fill");
+      fillBtn == null ? void 0 : fillBtn.addEventListener("click", async () => {
+        const ok = await this.fillFormWithRetry(data);
+        if (!ok) {
+          alert("未在当前可视区域探测到 Bug 表单。若您在首页或列表页，请先点击页面上的“提 Bug”按钮进入提单页，插件将自动完成填单。");
+        }
+      });
+      const dismissBtn = widget.querySelector("#qa-btn-floating-dismiss");
+      dismissBtn == null ? void 0 : dismissBtn.addEventListener("click", () => {
+        widget.remove();
+      });
+    }
+    static removeFloatingHelper() {
+      const helper = document.getElementById("qa-copilot-floating-helper");
+      if (helper) helper.remove();
+    }
+    /**
+     * 检查并在 Bug 详情页自动挂载现场截图 (方案 A)
+     */
+    static async checkAndAttachOnBugViewPage() {
+      var _a, _b, _c;
+      if (typeof window !== "undefined" && window !== window.top) {
+        return false;
+      }
+      const bugId = this.getBugIdFromViewPage();
+      if (!bugId) return false;
+      let pending;
+      try {
+        const getRes = chrome.storage.local.get(ZENTAO_PENDING_ATTACHMENT_KEY);
+        const res = typeof (getRes == null ? void 0 : getRes.then) === "function" ? await getRes : await new Promise((resolve) => chrome.storage.local.get(ZENTAO_PENDING_ATTACHMENT_KEY, resolve));
+        pending = res == null ? void 0 : res[ZENTAO_PENDING_ATTACHMENT_KEY];
+      } catch {
+        return false;
+      }
+      if (!pending || String(pending.bugId) !== String(bugId)) {
+        return false;
+      }
+      if (Date.now() - pending.createdAt > 10 * 60 * 1e3) {
+        try {
+          (_c = (_b = (_a = chrome.storage) == null ? void 0 : _a.local) == null ? void 0 : _b.remove) == null ? void 0 : _c.call(_b, ZENTAO_PENDING_ATTACHMENT_KEY);
+        } catch {
+        }
+        return false;
+      }
+      console.log(`[QA Copilot] 探测到 Bug #${bugId} 待同步截图附件，正在通过网页端同源会话上传…`);
+      if (typeof document !== "undefined" && document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", () => {
+          void this.uploadAttachmentInViewPage(pending);
+        }, { once: true });
+        return true;
+      }
+      return this.uploadAttachmentInViewPage(pending);
+    }
+    /**
+     * 确保详情页正文末尾显示高清截图（如果正文尚未显示图片）
+     */
+    static ensureScreenshotRenderedInViewPage(screenshotUrl) {
+      if (typeof document === "undefined") return;
+      try {
+        const detailContainer = document.querySelector(
+          ".detail-content, .article-content, #mainContent .detail, #legendLife, fieldset, .main-col"
+        );
+        if (!detailContainer) return;
+        const existingImg = detailContainer.querySelector('img[src^="data:image"], img[alt*="截图"], img[src*="qa-"]');
+        if (existingImg) return;
+        const card = document.createElement("div");
+        card.id = "qa-copilot-view-screenshot-card";
+        card.style.cssText = `
+        margin-top: 20px;
+        padding: 16px;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      `;
+        card.innerHTML = `
+        <div style="font-size: 14px; font-weight: 700; color: #0f172a; margin-bottom: 10px; border-left: 4px solid #2563eb; padding-left: 8px;">
+          📷 [问题现场截图 (QA Copilot 自动呈现)]
+        </div>
+        <div style="text-align: center;">
+          <img src="${screenshotUrl}" alt="问题现场截图" style="max-width: 100%; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); border: 1px solid #cbd5e1;" />
+        </div>
+      `;
+        detailContainer.appendChild(card);
+      } catch {
+      }
+    }
+    /**
+     * 在 Bug 详情页通过同源网络请求直接上传附件并关联到该 Bug
+     */
+    static async uploadAttachmentInViewPage(pending) {
+      var _a, _b, _c, _d;
+      const filesToUpload = [];
+      if (pending.screenshotUrl) {
+        const imgFile = dataUrlToFile(pending.screenshotUrl, pending.fileName || `qa-screenshot-bug-${pending.bugId}.png`);
+        if (imgFile) filesToUpload.push(imgFile);
+        this.ensureScreenshotRenderedInViewPage(pending.screenshotUrl);
+      }
+      if (pending.recordingDataUrl) {
+        const recFile = dataUrlToFile(pending.recordingDataUrl, pending.recordingFileName || `qa-recording-bug-${pending.bugId}.webm`);
+        if (recFile) filesToUpload.push(recFile);
+      }
+      if (filesToUpload.length === 0) return false;
+      let uploaded = false;
+      let pathname = "/";
+      if (typeof window !== "undefined" && window.location) {
+        if (typeof window.location.pathname === "string") {
+          pathname = window.location.pathname;
+        } else if (typeof window.location.href === "string") {
+          try {
+            pathname = new URL(window.location.href).pathname;
+          } catch {
+            pathname = "/";
+          }
+        }
+      }
+      const dirPath = pathname.substring(0, pathname.lastIndexOf("/") + 1) || "/";
+      const commentEndpoints = [
+        `${dirPath}action-comment-bug-${pending.bugId}.html`,
+        `${dirPath}index.php?m=action&f=comment&objectType=bug&objectID=${pending.bugId}`,
+        `/action-comment-bug-${pending.bugId}.html`,
+        `/index.php?m=action&f=comment&objectType=bug&objectID=${pending.bugId}`
+      ];
+      for (const ep of commentEndpoints) {
+        try {
+          const formData = new FormData();
+          formData.append("comment", `<p>【QA Copilot 自动同步现场附件：${filesToUpload.map((f) => f.name).join(", ")}】</p>`);
+          formData.append("objectType", "bug");
+          formData.append("objectID", String(pending.bugId));
+          for (const file of filesToUpload) {
+            formData.append("files[]", file, file.name);
+            formData.append("labels[]", file.name);
+          }
+          const resp = await fetch(ep, {
+            method: "POST",
+            credentials: "include",
+            body: formData
+          });
+          if (resp.ok || resp.status === 302 || resp.redirected) {
+            const text = await resp.text().catch(() => "");
+            if (!text.toLowerCase().includes("user-login") && !text.toLowerCase().includes("m=user&f=login")) {
+              uploaded = true;
+              console.log("[QA Copilot] 网页端通过 action-comment 成功挂载附件:", ep);
+              break;
+            }
+          }
+        } catch {
+        }
+      }
+      if (!uploaded) {
+        const uploadEndpoints = [
+          `${dirPath}file-ajaxUpload-bug-${pending.bugId}.html`,
+          `${dirPath}index.php?m=file&f=ajaxUpload&objectType=bug&objectID=${pending.bugId}`,
+          `/file-ajaxUpload-bug-${pending.bugId}.html`,
+          `${dirPath}file-ajaxUpload.html?objectType=bug&objectID=${pending.bugId}`,
+          `/file-ajaxUpload.html?objectType=bug&objectID=${pending.bugId}`,
+          `index.php?m=file&f=ajaxUpload&objectType=bug&objectID=${pending.bugId}`,
+          `${dirPath}file-upload-bug-${pending.bugId}.html`,
+          `${dirPath}index.php?m=file&f=upload&objectType=bug&objectID=${pending.bugId}`
+        ];
+        for (const ep of uploadEndpoints) {
+          try {
+            let allSuccess = true;
+            for (const file of filesToUpload) {
+              const formData = new FormData();
+              formData.append("file", file, file.name);
+              formData.append("files[]", file, file.name);
+              formData.append("files", file, file.name);
+              formData.append("imgFile", file, file.name);
+              formData.append("upfile", file, file.name);
+              formData.append("objectType", "bug");
+              formData.append("objectID", String(pending.bugId));
+              formData.append("comment", `【QA Copilot 自动同步现场附件：${file.name}】`);
+              const resp = await fetch(ep, {
+                method: "POST",
+                credentials: "include",
+                body: formData
+              });
+              if (resp.ok) {
+                const text = await resp.text().catch(() => "");
+                let isSuccess = false;
+                const isHtmlDoc = text.includes("<!DOCTYPE") || text.includes("<html") && !text.includes("afterUpload") && !text.includes("parent.location");
+                if (!isHtmlDoc) {
+                  try {
+                    const data = JSON.parse(text);
+                    if (data.result === "success" || data.status === "success" || data.status === "ok" || data.id || data.url || data.files || !data.error && !((_a = data.message) == null ? void 0 : _a.toLowerCase().includes("fail"))) {
+                      isSuccess = true;
+                    }
+                  } catch {
+                    if (text.includes("afterUpload") || text.includes("loadFiles") || resp.redirected) {
+                      isSuccess = true;
+                    }
+                  }
+                }
+                if (!isSuccess) {
+                  allSuccess = false;
+                  break;
+                }
+              } else {
+                allSuccess = false;
+                break;
+              }
+            }
+            if (allSuccess) {
+              uploaded = true;
+              console.log("[QA Copilot] 网页端通过 file-ajaxUpload 接口成功上传附件:", ep);
+              break;
+            }
+          } catch {
+          }
+        }
+      }
+      if (!uploaded) {
+        uploaded = await this.tryAttachViaCommentForm(filesToUpload, pending.bugId);
+      }
+      if (uploaded) {
+        try {
+          (_d = (_c = (_b = chrome.storage) == null ? void 0 : _b.local) == null ? void 0 : _c.remove) == null ? void 0 : _d.call(_c, ZENTAO_PENDING_ATTACHMENT_KEY);
+        } catch {
+        }
+      }
+      this.showAttachmentSuccessBanner(pending.bugId, uploaded, Boolean(pending.recordingDataUrl));
+      if (uploaded && typeof window !== "undefined" && window.location) {
+        setTimeout(() => {
+          window.location.reload();
+        }, 1200);
+      }
+      return uploaded;
+    }
+    /**
+     * 兜底：通过详情页的备注与附件表单自动挂载提交
+     */
+    static async tryAttachViaCommentForm(files, bugId) {
+      try {
+        const fileInputs = Array.from(
+          document.querySelectorAll(
+            'form input[type="file"][name*="files"], form input[type="file"][name*="file"], input[type="file"]'
+          )
+        );
+        if (fileInputs.length === 0) return false;
+        for (const input of fileInputs) {
+          try {
+            const dt = new DataTransfer();
+            files.forEach((f) => dt.items.add(f));
+            input.files = dt.files;
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            const form = input.closest("form");
+            if (form) {
+              const commentBox = form.querySelector('textarea#comment, textarea[name="comment"]');
+              if (commentBox && !commentBox.value) {
+                commentBox.value = `【QA Copilot 自动补充 Bug #${bugId} 现场截图与录屏附件】`;
+                commentBox.dispatchEvent(new Event("input", { bubbles: true }));
+              }
+              const submitBtn = form.querySelector('button[type="submit"], input[type="submit"], #submit');
+              if (submitBtn) {
+                submitBtn.click();
+                console.log("[QA Copilot] 已通过详情页备注表单提交附件");
+                return true;
+              }
+            }
+          } catch {
+          }
+        }
+      } catch {
+      }
+      return false;
+    }
+    /**
+     * 在详情页顶部展示附件关联成功的操作横幅
+     */
+    static showAttachmentSuccessBanner(bugId, success, hasRecording = false) {
+      var _a, _b;
+      const existing = document.getElementById("qa-copilot-attachment-banner");
+      if (existing) existing.remove();
+      const banner = document.createElement("div");
+      banner.id = "qa-copilot-attachment-banner";
+      banner.style.cssText = `
+      position: fixed;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 999999;
+      background: ${success ? "linear-gradient(135deg, #059669 0%, #10b981 100%)" : "linear-gradient(135deg, #d97706 0%, #f59e0b 100%)"};
+      color: #ffffff;
+      padding: 10px 18px;
+      border-radius: 10px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.25), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 13px;
+      animation: qaSlideDown 0.3s ease-out;
+    `;
+      const labelText = hasRecording ? "现场截图与录屏附件" : "现场截图附件";
+      banner.innerHTML = `
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span style="font-size: 18px;">${success ? "🎉" : "⚠️"}</span>
+        <div>
+          <strong style="font-weight: 700;">
+            ${success ? `Bug #${bugId} ${labelText}已自动同步至附件列表！` : `Bug #${bugId} 已创建，附件已就绪`}
+          </strong>
+          <span style="opacity: 0.95; font-size: 12px; margin-left: 4px;">
+            ${success ? "利用网页端同源合法会话挂载完成，免去 API 权限限制。" : "如附件区未出现，可点击编辑直接 Ctrl+V / Cmd+V 粘贴。"}
+          </span>
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <button id="qa-zentao-banner-refresh" style="
+          background: #ffffff;
+          color: ${success ? "#065f46" : "#92400e"};
+          border: none;
+          padding: 5px 12px;
+          border-radius: 6px;
+          font-weight: 700;
+          font-size: 12px;
+          cursor: pointer;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        ">刷新查看附件</button>
+        <button id="qa-zentao-banner-close" style="
+          background: rgba(255,255,255,0.2);
+          color: #ffffff;
+          border: none;
+          padding: 5px 10px;
+          border-radius: 6px;
+          font-size: 12px;
+          cursor: pointer;
+        ">✕</button>
+      </div>
+    `;
+      const mountNode = document.body || document.documentElement;
+      if (mountNode) {
+        mountNode.appendChild(banner);
+      }
+      (_a = banner.querySelector("#qa-zentao-banner-refresh")) == null ? void 0 : _a.addEventListener("click", () => {
+        window.location.reload();
+      });
+      (_b = banner.querySelector("#qa-zentao-banner-close")) == null ? void 0 : _b.addEventListener("click", () => {
+        banner.remove();
+      });
+      if (success) {
+        setTimeout(() => {
+          banner.remove();
+        }, 5e3);
+      }
+    }
+  }
+  __publicField(ZentaoFillExecutor, "hasFilled", false);
+  __publicField(ZentaoFillExecutor, "observer", null);
   console.log("[QA Copilot] Content Script 注入页面:", window.location.href);
   initializeFrameGeometryRelay();
+  void ZentaoFillExecutor.checkAndExecute();
   function publishMockRules(rules) {
     window.postMessage({ source: "QA_COPILOT_CONTENT", type: "MOCK_CONFIG", data: Array.isArray(rules) ? rules : [] }, "*");
   }
@@ -2701,11 +4023,15 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   }).catch(() => {
   });
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
     const isTopFrame = window === window.top;
     if ((message == null ? void 0 : message.type) === "CAPTURE_PING") {
       sendResponse({ ready: true, networkReady: networkInterceptorReady, url: window.location.href, title: document.title, isTopFrame });
       return false;
+    }
+    if ((message == null ? void 0 : message.type) === "TRIGGER_ZENTAO_FILL") {
+      ZentaoFillExecutor.executeWithData(message.payload).then((success) => sendResponse({ success })).catch((err) => sendResponse({ success: false, error: err.message }));
+      return true;
     }
     if ((message == null ? void 0 : message.type) === "START_ELEMENT_INSPECTION") {
       startInspection();
@@ -2714,6 +4040,16 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     }
     if ((message == null ? void 0 : message.type) === "STOP_ELEMENT_INSPECTION") {
       stopInspection();
+      sendResponse({ success: true });
+      return false;
+    }
+    if ((message == null ? void 0 : message.type) === "UPDATE_TEST_HUD") {
+      updateTestHud(message.payload);
+      sendResponse({ success: true });
+      return false;
+    }
+    if ((message == null ? void 0 : message.type) === "DISMISS_TEST_HUD") {
+      dismissTestHud((_a = message.payload) == null ? void 0 : _a.instant);
       sendResponse({ success: true });
       return false;
     }
@@ -2730,7 +4066,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       return false;
     }
     if ((message == null ? void 0 : message.type) === "REPLAY_ACTION_COMPLETE") {
-      if (((_a = message.payload) == null ? void 0 : _a.replayId) === activeContentReplayId) {
+      if (((_b = message.payload) == null ? void 0 : _b.replayId) === activeContentReplayId) {
         activeContentReplayId = null;
         replayCdpPending = false;
       }
@@ -2738,15 +4074,15 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       return false;
     }
     if ((message == null ? void 0 : message.type) === "REPLAY_ACTION") {
-      const targetFrameId = (_b = message.payload) == null ? void 0 : _b.targetFrameId;
+      const targetFrameId = (_c = message.payload) == null ? void 0 : _c.targetFrameId;
       if (targetFrameId !== void 0 && targetFrameId !== null) {
         if (targetFrameId === 0 && !isTopFrame) return false;
       } else if (!isTopFrame) {
         return false;
       }
-      activeContentReplayId = ((_c = message.payload) == null ? void 0 : _c.replayId) || `replay-${Date.now()}`;
+      activeContentReplayId = ((_d = message.payload) == null ? void 0 : _d.replayId) || `replay-${Date.now()}`;
       replayCdpPending = false;
-      replayAction((_d = message.payload) == null ? void 0 : _d.event, activeContentReplayId, Boolean((_e = message.payload) == null ? void 0 : _e.useCdp)).then((res) => {
+      replayAction((_e = message.payload) == null ? void 0 : _e.event, activeContentReplayId, Boolean((_f = message.payload) == null ? void 0 : _f.useCdp)).then((res) => {
         if (res.cdpInput) replayCdpPending = true;
         else activeContentReplayId = null;
         sendResponse(res);
@@ -2760,8 +4096,8 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     if ((message == null ? void 0 : message.type) === "PING_TASK_STATUS") {
       if (!isTopFrame) return false;
       const activeFormRunId = FormExecutor.getActiveRunId();
-      const isFormRunning = Boolean(activeFormRunId && activeFormRunId === ((_f = message.payload) == null ? void 0 : _f.runId));
-      const isReplayRunning = Boolean(activeContentReplayId && activeContentReplayId === ((_g = message.payload) == null ? void 0 : _g.runId));
+      const isFormRunning = Boolean(activeFormRunId && activeFormRunId === ((_g = message.payload) == null ? void 0 : _g.runId));
+      const isReplayRunning = Boolean(activeContentReplayId && activeContentReplayId === ((_h = message.payload) == null ? void 0 : _h.runId));
       const isRunning = isFormRunning || isReplayRunning;
       const activeRunId = isFormRunning ? activeFormRunId : isReplayRunning ? activeContentReplayId : null;
       sendResponse({ isRunning, activeRunId });
@@ -2789,18 +4125,18 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     }
     if ((message == null ? void 0 : message.type) === "CANCEL_FORM_FILL") {
       if (!isTopFrame) return false;
-      FormExecutor.cancel((_h = message.payload) == null ? void 0 : _h.runId);
+      FormExecutor.cancel((_i = message.payload) == null ? void 0 : _i.runId);
       sendResponse({ success: true });
       return false;
     }
     if ((message == null ? void 0 : message.type) === "UNDO_FORM_FILL") {
       if (!isTopFrame) return false;
-      const fallback = ((_i = message.payload) == null ? void 0 : _i.steps) ? { snapshotId: message.payload.snapshotId, steps: message.payload.steps } : void 0;
+      const fallback = ((_j = message.payload) == null ? void 0 : _j.steps) ? { snapshotId: message.payload.snapshotId, steps: message.payload.steps } : void 0;
       FormExecutor.undo(message.payload.runId, fallback).then((result) => sendResponse(result)).catch((error) => sendResponse({ success: false, restoredCount: 0, conflictCount: 0, error: error.message }));
       return true;
     }
     if ((message == null ? void 0 : message.type) === "COLLECT_AI_OBSERVATION") {
-      if (!isTopFrame && ((_j = message.payload) == null ? void 0 : _j.allFrames) === false) return false;
+      if (!isTopFrame && ((_k = message.payload) == null ? void 0 : _k.allFrames) === false) return false;
       try {
         sendResponse(collectAiObservation());
       } catch (error) {
@@ -2818,6 +4154,15 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       }).then((result) => sendResponse(result)).catch((err) => sendResponse({ success: false, message: err.message }));
       return true;
     }
+    if ((message == null ? void 0 : message.type) === "GET_PAGE_CONTEXT") {
+      if (!isTopFrame) return false;
+      sendResponse({
+        currentUser: detectCurrentUserFromPage(),
+        url: window.location.href,
+        title: document.title
+      });
+      return true;
+    }
     if ((message == null ? void 0 : message.type) !== "ANALYZE_PAGE") return false;
     try {
       sendResponse({ ...DomAnalyzer.parsePageContext(document), url: window.location.href, title: document.title });
@@ -2826,6 +4171,58 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     }
     return false;
   });
+  function detectCurrentUserFromPage() {
+    var _a, _b;
+    try {
+      const domSelectors = [
+        ".avatar-wrapper .user-nickname",
+        ".avatar-wrapper span",
+        ".user-name",
+        ".username",
+        ".user-profile span",
+        ".user-info .name",
+        ".nickname",
+        '[class*="user-name"]',
+        '[class*="avatar-wrapper"]',
+        '[class*="user-profile"]',
+        ".right-menu .avatar-container",
+        ".el-dropdown-link .user-name",
+        ".ant-dropdown-trigger .username",
+        ".arco-dropdown-open .username"
+      ];
+      for (const sel of domSelectors) {
+        const el = document.querySelector(sel);
+        const text = (_a = el == null ? void 0 : el.textContent) == null ? void 0 : _a.trim();
+        if (text && text.length >= 2 && text.length <= 30 && !/^(登录|退出|注销|设置|修改密码)$/.test(text)) {
+          return text;
+        }
+      }
+      const directKeys = ["username", "userName", "nickName", "user_name", "current_user", "login_user"];
+      for (const k of directKeys) {
+        const v = localStorage.getItem(k) || sessionStorage.getItem(k);
+        if (v && typeof v === "string" && v.trim().length >= 2 && v.trim().length <= 30) {
+          return v.trim();
+        }
+      }
+      const jsonKeys = ["user", "userInfo", "USER_INFO", "currentUser", "loginUser", "admin_user", "vuex"];
+      for (const k of jsonKeys) {
+        const raw = localStorage.getItem(k) || sessionStorage.getItem(k);
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw);
+            const userObj = ((_b = parsed == null ? void 0 : parsed.user) == null ? void 0 : _b.user) || (parsed == null ? void 0 : parsed.user) || (parsed == null ? void 0 : parsed.userInfo) || parsed;
+            const candidate = (userObj == null ? void 0 : userObj.nickName) || (userObj == null ? void 0 : userObj.nickname) || (userObj == null ? void 0 : userObj.userName) || (userObj == null ? void 0 : userObj.username) || (userObj == null ? void 0 : userObj.name) || (userObj == null ? void 0 : userObj.realName);
+            if (candidate && typeof candidate === "string" && candidate.trim().length >= 2 && candidate.trim().length <= 30) {
+              return candidate.trim();
+            }
+          } catch {
+          }
+        }
+      }
+    } catch {
+    }
+    return void 0;
+  }
   window.addEventListener("message", (event) => {
     var _a;
     try {
@@ -2982,6 +4379,101 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     }
     return poppers;
   }
+  function safeCloseDropdownPopper(optionEl) {
+    var _a;
+    try {
+      const activePoppers = getActiveDropdownPoppers();
+      if (activePoppers.length === 0) return;
+      if (optionEl) {
+        const parentPopper = (_a = optionEl.closest) == null ? void 0 : _a.call(
+          optionEl,
+          '.el-select-dropdown, .ant-select-dropdown, .arco-select-dropdown, .vue-treeselect__menu, [class*="select-dropdown"]'
+        );
+        if (parentPopper == null ? void 0 : parentPopper.id) {
+          const associatedTrigger = document.querySelector(
+            `[aria-controls="${parentPopper.id}"], [aria-owns="${parentPopper.id}"], [data-popper-id="${parentPopper.id}"]`
+          );
+          const input = associatedTrigger == null ? void 0 : associatedTrigger.querySelector("input, .el-select__input");
+          if (input && typeof input.blur === "function") {
+            input.blur();
+          }
+        }
+      }
+      const activeSelects = Array.from(document.querySelectorAll(
+        '.el-select.is-focus, .el-select__wrapper.is-focused, .ant-select-open, .arco-select-open, .n-select--active, .vue-treeselect--is-open, [role="combobox"][aria-expanded="true"]'
+      ));
+      for (const select of activeSelects) {
+        const input = select.querySelector("input, .el-select__input, [tabindex]");
+        if (input && typeof input.blur === "function") {
+          input.blur();
+        }
+      }
+      const activeModals = getActiveModalContainers();
+      if (activeModals.length > 0) {
+        const topModal = activeModals[activeModals.length - 1];
+        let safeTarget = topModal.querySelector(
+          ".el-dialog__title, .el-drawer__title, .ant-modal-title, .ant-drawer-title, .modal-title, .arco-modal-title"
+        );
+        if (!safeTarget) {
+          const header = topModal.querySelector(
+            ".el-dialog__header, .el-drawer__header, .ant-modal-header, .modal-header, .arco-modal-header"
+          );
+          if (header) {
+            safeTarget = header.querySelector(
+              'span, p, h1, h2, h3, h4, h5, div:not([role="button"]):not([class*="close"])'
+            ) || header;
+          }
+        }
+        if (!safeTarget) {
+          const body = topModal.querySelector(
+            ".el-dialog__body, .el-drawer__body, .ant-modal-body, .modal-body, .arco-modal-body"
+          );
+          if (body) {
+            safeTarget = body;
+          } else {
+            safeTarget = topModal;
+          }
+        }
+        const mouseOpts = { bubbles: true, cancelable: true, view: window };
+        try {
+          if (typeof PointerEvent !== "undefined") {
+            safeTarget.dispatchEvent(new PointerEvent("pointerdown", mouseOpts));
+          }
+        } catch {
+        }
+        try {
+          if (typeof MouseEvent !== "undefined") {
+            safeTarget.dispatchEvent(new MouseEvent("mousedown", mouseOpts));
+            safeTarget.dispatchEvent(new MouseEvent("mouseup", mouseOpts));
+            safeTarget.dispatchEvent(new MouseEvent("click", mouseOpts));
+          } else if (typeof CustomEvent !== "undefined") {
+            safeTarget.dispatchEvent(new CustomEvent("click", mouseOpts));
+          }
+        } catch {
+        }
+      } else {
+        const mouseOpts = { bubbles: true, cancelable: true, view: window };
+        try {
+          if (typeof PointerEvent !== "undefined") {
+            document.body.dispatchEvent(new PointerEvent("pointerdown", mouseOpts));
+          }
+        } catch {
+        }
+        try {
+          if (typeof MouseEvent !== "undefined") {
+            document.body.dispatchEvent(new MouseEvent("mousedown", mouseOpts));
+            document.body.dispatchEvent(new MouseEvent("mouseup", mouseOpts));
+            document.body.dispatchEvent(new MouseEvent("click", mouseOpts));
+          } else if (typeof CustomEvent !== "undefined") {
+            document.body.dispatchEvent(new CustomEvent("click", mouseOpts));
+          }
+        } catch {
+        }
+      }
+    } catch (e) {
+      console.warn("[QA Copilot] 安全收起下拉浮层异常:", e);
+    }
+  }
   function getActiveDatePickerPoppers() {
     var _a;
     const popperSelectors = [
@@ -3021,7 +4513,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   }
   const observationElementCache = /* @__PURE__ */ new Map();
   function collectAiObservation() {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y;
     const selector = [
       "button",
       "a[href]",
@@ -3071,6 +4563,12 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     const activePoppers = getActiveDropdownPoppers();
     const hasActivePopper = activePoppers.length > 0;
     const allRaw = Array.from(document.querySelectorAll(selector));
+    const isQaCopilotElement = (el) => {
+      var _a2;
+      return Boolean(
+        (_a2 = el.closest) == null ? void 0 : _a2.call(el, "[data-qa-copilot-root], [data-qa-copilot-hud]")
+      );
+    };
     const isHeaderEl = (el) => {
       var _a2;
       return Boolean(
@@ -3102,7 +4600,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       const mainCandidates = [];
       const backgroundCandidates = [];
       for (const el of allRaw) {
-        if (!el) continue;
+        if (!el || isQaCopilotElement(el)) continue;
         const inPopper = hasActivePopper && activePoppers.some((p) => {
           var _a2;
           return (_a2 = p.contains) == null ? void 0 : _a2.call(p, el);
@@ -3129,7 +4627,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       const headerCandidates = [];
       const otherCandidates = [];
       for (const el of allRaw) {
-        if (!el) continue;
+        if (!el || isQaCopilotElement(el)) continue;
         if (isHeaderEl(el)) {
           headerCandidates.push(el);
         } else if (isSidebarEl(el)) {
@@ -3173,7 +4671,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         element.closest('aside, nav, .sidebar, .sidebar-container, .left-aside, .org-tree, [class*="sidebar"]')
       );
       const isDropdownOption = !isInSidebar && (inPopper || Boolean(
-        element.closest('.el-select-dropdown, .ant-select-dropdown, .arco-select-dropdown, .vue-treeselect__menu, .vue-treeselect__menu-container, .vue-treeselect__portal-container, .el-tree-select__popper, .el-cascader__dropdown, [class*="select-dropdown"], [class*="treeselect__menu"]') || ((_c = element.classList) == null ? void 0 : _c.contains("el-select-dropdown__item")) || ((_d = element.classList) == null ? void 0 : _d.contains("ant-select-item-option")) || ((_e = element.classList) == null ? void 0 : _e.contains("arco-select-option")) || ((_f = element.classList) == null ? void 0 : _f.contains("vue-treeselect__option")) || ((_g = element.classList) == null ? void 0 : _g.contains("vue-treeselect__label")) || ((_h = element.classList) == null ? void 0 : _h.contains("el-cascader-node")) || element.getAttribute("role") === "option" && !element.closest("aside, .sidebar")
+        element.closest('.el-select-dropdown, .ant-select-dropdown, .arco-select-dropdown, .vue-treeselect__menu, .vue-treeselect__menu-container, .vue-treeselect__portal-container, .el-tree-select__popper, .el-select__popper, .el-popper, .el-cascader__dropdown, [class*="select-dropdown"], [class*="treeselect__menu"], [class*="tree-select"]') || ((_c = element.classList) == null ? void 0 : _c.contains("el-select-dropdown__item")) || ((_d = element.classList) == null ? void 0 : _d.contains("ant-select-item-option")) || ((_e = element.classList) == null ? void 0 : _e.contains("arco-select-option")) || ((_f = element.classList) == null ? void 0 : _f.contains("vue-treeselect__option")) || ((_g = element.classList) == null ? void 0 : _g.contains("vue-treeselect__label")) || ((_h = element.classList) == null ? void 0 : _h.contains("el-tree-node__content")) || ((_i = element.classList) == null ? void 0 : _i.contains("el-tree-node")) || ((_j = element.classList) == null ? void 0 : _j.contains("el-cascader-node")) || element.getAttribute("role") === "option" && !element.closest("aside, .sidebar")
       ));
       if (isDropdownOption && element.querySelector('.el-select-dropdown__item, .el-tree-node__content, .vue-treeselect__label, [role="option"], [role="treeitem"]')) {
         continue;
@@ -3189,7 +4687,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       const ariaLabel = element.getAttribute("aria-label") || void 0;
       const title = element.getAttribute("title") || void 0;
       const inHeader = isHeaderEl(element);
-      const placeholder = element.getAttribute("placeholder") || ((_i = element.querySelector("input")) == null ? void 0 : _i.getAttribute("placeholder")) || ((_k = (_j = element.querySelector('.el-select__placeholder, .ant-select-selection-placeholder, [class*="placeholder"]')) == null ? void 0 : _j.textContent) == null ? void 0 : _k.trim()) || void 0;
+      const placeholder = element.getAttribute("placeholder") || ((_k = element.querySelector("input")) == null ? void 0 : _k.getAttribute("placeholder")) || ((_m = (_l = element.querySelector('.el-select__placeholder, .ant-select-selection-placeholder, [class*="placeholder"]')) == null ? void 0 : _l.textContent) == null ? void 0 : _m.trim()) || void 0;
       let name;
       if (isClickableAction && rawText) {
         name = rawText;
@@ -3208,19 +4706,36 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       if (tag === "input" || tag === "textarea" || tag === "select") {
         const isPassword = tag === "input" && element.type === "password";
         if (!isPassword) {
-          val = ((_l = element.value) == null ? void 0 : _l.trim()) || void 0;
+          val = ((_n = element.value) == null ? void 0 : _n.trim()) || void 0;
         } else {
           val = element.value ? "******" : void 0;
         }
       }
-      if (isDropdownTrigger && !val) {
-        const selectedItemEl = element.querySelector(
-          '.el-select__selected-item, .ant-select-selection-item, .arco-select-view-value, [class*="selected-item"]'
-        );
-        if (selectedItemEl) {
-          const selText = (_m = selectedItemEl.textContent) == null ? void 0 : _m.trim();
-          if (selText && !selText.startsWith("请选择")) {
-            val = selText;
+      const isMultiple = Boolean(
+        ((_o = element.classList) == null ? void 0 : _o.contains("is-multiple")) || ((_p = element.classList) == null ? void 0 : _p.contains("el-select--multiple")) || ((_q = element.classList) == null ? void 0 : _q.contains("ant-select-multiple")) || element.querySelector(".el-select__tags, .ant-select-selection-overflow, .vue-treeselect__multi-value")
+      );
+      if (isDropdownTrigger) {
+        if (!val) {
+          const selectedItemEl = element.querySelector(
+            '.el-select__selected-item, .ant-select-selection-item, .arco-select-view-value, .vue-treeselect__single-value, [class*="selected-item"]'
+          );
+          if (selectedItemEl) {
+            const selText = (_r = selectedItemEl.textContent) == null ? void 0 : _r.trim();
+            if (selText && !selText.startsWith("请选择")) {
+              val = selText;
+            }
+          }
+        }
+        if (!val || isMultiple) {
+          const tagEls = Array.from(element.querySelectorAll(
+            '.el-select__tags .el-tag, .el-select__tags-text, .ant-select-selection-overflow-item, .vue-treeselect__multi-value-item, .arco-tag, [class*="select__tags"] [class*="tag"]'
+          ));
+          const tags = Array.from(new Set(tagEls.map((t) => {
+            var _a2;
+            return (_a2 = t.textContent) == null ? void 0 : _a2.trim();
+          }).filter(Boolean)));
+          if (tags.length > 0) {
+            val = tags.join(", ");
           }
         }
       }
@@ -3228,12 +4743,24 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       let inferredRole = element.getAttribute("role") || void 0;
       if (isDropdownOption) {
         inferredRole = "option";
-        name = `[当前下拉选项] ${rawText || name || "选项"}`;
-        text = `[当前下拉选项] ${rawText || name || "选项"}`;
+        const isTreeOption = Boolean(
+          ((_s = element.classList) == null ? void 0 : _s.contains("el-tree-node__content")) || ((_t = element.classList) == null ? void 0 : _t.contains("vue-treeselect__label")) || ((_u = element.classList) == null ? void 0 : _u.contains("el-tree-node")) || element.closest(".vue-treeselect__menu, .el-tree-select__popper, .ant-tree-select-dropdown, .el-tree")
+        );
+        const isSelected = Boolean(
+          ((_v = element.classList) == null ? void 0 : _v.contains("is-selected")) || ((_w = element.classList) == null ? void 0 : _w.contains("selected")) || element.getAttribute("aria-selected") === "true" || element.closest(".vue-treeselect__option--selected, .el-select-dropdown__item.is-selected")
+        );
+        const selectedFlag = isSelected ? " [已勾选]" : "";
+        const optionPrefix = isTreeOption ? "[当前树节点选项]" : "[当前下拉选项]";
+        name = `${optionPrefix} ${rawText || name || "选项"}${selectedFlag}`;
+        text = `${optionPrefix} ${rawText || name || "选项"}${selectedFlag}`;
       } else if (isDropdownTrigger) {
         inferredRole = "combobox";
-        if (name && !name.includes("下拉框") && !name.includes("选择")) {
-          name = `[下拉框] ${name}`;
+        const cleanName = (name || "").replace(/\[(?:多选)?下拉框\]\s*/g, "");
+        const valInfo = val ? ` (当前已选: ${val})` : "";
+        if (isMultiple) {
+          name = `[多选下拉框] ${cleanName}${valInfo}`;
+        } else {
+          name = `[下拉框] ${cleanName}${valInfo}`;
         }
         text = rawText ? inModal ? `[弹窗内] ${rawText}` : rawText : void 0;
       } else {
@@ -3260,7 +4787,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         text,
         placeholder: placeholder == null ? void 0 : placeholder.slice(0, 120),
         value: val == null ? void 0 : val.slice(0, 100),
-        testId: ((_n = element.getAttribute("data-testid")) == null ? void 0 : _n.slice(0, 100)) || void 0,
+        testId: ((_x = element.getAttribute("data-testid")) == null ? void 0 : _x.slice(0, 100)) || void 0,
         ariaLabel: ariaLabel == null ? void 0 : ariaLabel.slice(0, 120),
         selector: getCssSelector(element),
         inputType: tag === "input" ? element.type : void 0,
@@ -3300,7 +4827,7 @@ ${text}`;
 `;
     }
     const statusText = Array.from(document.querySelectorAll('h1,h2,h3,[role="alert"],[aria-live="polite"],[aria-live="assertive"]')).filter((element) => isElementVisible(element)).map((element) => element.innerText || element.textContent || "").join("\n");
-    const bodyText = (((_o = document.body) == null ? void 0 : _o.innerText) || "").slice(0, 1500);
+    const bodyText = (((_y = document.body) == null ? void 0 : _y.innerText) || "").slice(0, 1500);
     return {
       url: window.location.href,
       title: document.title.slice(0, 160),
@@ -4133,36 +5660,42 @@ ${bodyText}`.trim().slice(0, 4e3),
     return false;
   }
   function dispatchClick(target) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
-    let trigger = (_a = target.querySelector) == null ? void 0 : _a.call(
-      target,
-      '.el-submenu__title, .ant-menu-submenu-title, .arco-menu-inline-header, [class*="submenu__title"], [class*="submenu-title"], [class*="collapse-item__header"], [class*="collapse-header"]'
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w;
+    const isOptionLike = Boolean(
+      ((_a = target.getAttribute) == null ? void 0 : _a.call(target, "role")) === "option" || ((_b = target.getAttribute) == null ? void 0 : _b.call(target, "role")) === "treeitem" || ((_c = target.classList) == null ? void 0 : _c.contains("el-select-dropdown__item")) || ((_d = target.classList) == null ? void 0 : _d.contains("ant-select-item-option")) || ((_e = target.classList) == null ? void 0 : _e.contains("arco-select-option")) || ((_f = target.classList) == null ? void 0 : _f.contains("vue-treeselect__option")) || ((_g = target.classList) == null ? void 0 : _g.contains("vue-treeselect__label")) || ((_h = target.classList) == null ? void 0 : _h.contains("vue-treeselect__option-arrow")) || ((_i = target.classList) == null ? void 0 : _i.contains("el-tree-node__content")) || ((_j = target.classList) == null ? void 0 : _j.contains("el-tree-node__label")) || ((_k = target.classList) == null ? void 0 : _k.contains("el-tree-node__expand-icon")) || ((_l = target.classList) == null ? void 0 : _l.contains("el-cascader-node")) || Boolean((_m = target.closest) == null ? void 0 : _m.call(target, '.el-select-dropdown, .ant-select-dropdown, .vue-treeselect__menu, .vue-treeselect__menu-container, .vue-treeselect__portal-container, .el-tree-select__popper, .el-select__popper, .el-cascader__dropdown, [class*="select-dropdown"], [class*="treeselect__menu"]'))
     );
-    const selectContainer = (_b = target.closest) == null ? void 0 : _b.call(
-      target,
-      '.el-select, .ant-select, [role="combobox"], .n-select, .arco-select, [class*="select-trigger"]'
-    );
-    if (!trigger && selectContainer) {
-      trigger = ((_c = selectContainer.querySelector) == null ? void 0 : _c.call(
-        selectContainer,
-        ".el-select__wrapper, .select-trigger, .ant-select-selector, .arco-select-view, .el-input__inner, input"
-      )) || selectContainer;
-    } else if (!trigger && (((_d = target.classList) == null ? void 0 : _d.contains("el-select")) || ((_e = target.classList) == null ? void 0 : _e.contains("ant-select")) || ((_f = target.getAttribute) == null ? void 0 : _f.call(target, "role")) === "combobox")) {
-      trigger = (_g = target.querySelector) == null ? void 0 : _g.call(
+    let trigger = null;
+    if (!isOptionLike) {
+      trigger = (_n = target.querySelector) == null ? void 0 : _n.call(
         target,
-        ".el-select__wrapper, .select-trigger, .ant-select-selector, .el-input__inner, input"
+        '.el-submenu__title, .ant-menu-submenu-title, .arco-menu-inline-header, [class*="submenu__title"], [class*="submenu-title"], [class*="collapse-item__header"], [class*="collapse-header"]'
       );
+      const selectContainer = (_o = target.closest) == null ? void 0 : _o.call(
+        target,
+        '.el-select, .ant-select, [role="combobox"], .n-select, .arco-select, [class*="select-trigger"]'
+      );
+      if (!trigger && selectContainer) {
+        trigger = ((_p = selectContainer.querySelector) == null ? void 0 : _p.call(
+          selectContainer,
+          ".el-select__wrapper, .select-trigger, .ant-select-selector, .arco-select-view, .el-input__inner, input"
+        )) || selectContainer;
+      } else if (!trigger && (((_q = target.classList) == null ? void 0 : _q.contains("el-select")) || ((_r = target.classList) == null ? void 0 : _r.contains("ant-select")) || ((_s = target.getAttribute) == null ? void 0 : _s.call(target, "role")) === "combobox")) {
+        trigger = (_t = target.querySelector) == null ? void 0 : _t.call(
+          target,
+          ".el-select__wrapper, .select-trigger, .ant-select-selector, .el-input__inner, input"
+        );
+      }
     }
     const clickNode = trigger || target;
     try {
-      const focusable = ((_h = clickNode.querySelector) == null ? void 0 : _h.call(clickNode, "input")) || clickNode;
-      (_i = focusable.focus) == null ? void 0 : _i.call(focusable, { preventScroll: true });
+      const focusable = ((_u = clickNode.querySelector) == null ? void 0 : _u.call(clickNode, "input")) || clickNode;
+      (_v = focusable.focus) == null ? void 0 : _v.call(focusable, { preventScroll: true });
     } catch {
     }
     let clientX = 0;
     let clientY = 0;
     try {
-      const rect = (_j = clickNode.getBoundingClientRect) == null ? void 0 : _j.call(clickNode);
+      const rect = (_w = clickNode.getBoundingClientRect) == null ? void 0 : _w.call(clickNode);
       if (rect && (rect.width > 0 || rect.height > 0)) {
         clientX = Math.round(rect.left + rect.width / 2);
         clientY = Math.round(rect.top + rect.height / 2);
@@ -4263,7 +5796,7 @@ ${bodyText}`.trim().slice(0, 4e3),
   let replayDispatching = false;
   let replaySuppressedUntil = 0;
   async function replayAction(event, replayId, useCdp = false) {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
     if (!event || event.type !== "click" && event.type !== "input" && event.type !== "scroll") {
       return { success: false, error: "不支持的回放步骤" };
     }
@@ -4331,12 +5864,32 @@ ${bodyText}`.trim().slice(0, 4e3),
         if ("disabled" in htmlTarget && Boolean(htmlTarget.disabled)) {
           return { success: false, error: `元素已禁用不可点击：${event.description}` };
         }
+        const isOptionLike = Boolean(
+          ((_i = htmlTarget.getAttribute) == null ? void 0 : _i.call(htmlTarget, "role")) === "option" || ((_j = htmlTarget.classList) == null ? void 0 : _j.contains("el-select-dropdown__item")) || ((_k = htmlTarget.classList) == null ? void 0 : _k.contains("ant-select-item-option")) || ((_l = htmlTarget.classList) == null ? void 0 : _l.contains("arco-select-option")) || ((_m = htmlTarget.classList) == null ? void 0 : _m.contains("vue-treeselect__option")) || ((_n = htmlTarget.classList) == null ? void 0 : _n.contains("vue-treeselect__label")) || ((_o = htmlTarget.closest) == null ? void 0 : _o.call(htmlTarget, '.el-select-dropdown, .ant-select-dropdown, .vue-treeselect__menu, .vue-treeselect__menu-container, [class*="select-dropdown"]'))
+        );
+        if (!isOptionLike) {
+          const activePoppers = getActiveDropdownPoppers();
+          if (activePoppers.length > 0 && !activePoppers.some((p) => p.contains(htmlTarget))) {
+            safeCloseDropdownPopper(htmlTarget);
+            await new Promise((resolve) => setTimeout(resolve, 80));
+          }
+        }
         if (useCdp) {
           const cdpInput = await createCdpInputAction(htmlTarget, "click");
           if (!cdpInput) return { success: false, error: "无法计算 iframe 内元素的顶层点击坐标" };
+          if (isOptionLike) {
+            window.setTimeout(() => {
+              safeCloseDropdownPopper(htmlTarget);
+            }, 180);
+          }
           return { success: true, cdpInput };
         }
         dispatchClick(htmlTarget);
+        if (isOptionLike) {
+          window.setTimeout(() => {
+            safeCloseDropdownPopper(htmlTarget);
+          }, 120);
+        }
       } else {
         const input = target;
         const payload = event.payload;
@@ -4769,6 +6322,7 @@ ${bodyText}`.trim().slice(0, 4e3),
     }
   });
   exports.collectAiObservation = collectAiObservation;
+  exports.detectCurrentUserFromPage = detectCurrentUserFromPage;
   exports.findClickTarget = findClickTarget;
   exports.findScrollTarget = findScrollTarget;
   exports.isDatePickerEvent = isDatePickerEvent;

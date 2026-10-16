@@ -52,6 +52,7 @@ export interface FormFieldItem {
   };
   optionsState?: 'complete' | 'partial' | 'unloaded' | 'none';
   options?: FormFieldOption[];
+  isMultiple?: boolean;
   groupName?: string;
   unsupportedReason?: string;
 }
@@ -78,7 +79,8 @@ export type FormFillAction = 'fill' | 'select' | 'check' | 'setDate' | 'skip';
 export interface FormFillAssignment {
   fieldId: string;
   action: FormFillAction;
-  value?: string | number | boolean;
+  value?: string | number | boolean | string[];
+  values?: string[];
   optionIds?: string[];
   source: 'instruction' | 'source_text' | 'generated' | 'option';
   reason?: string;
@@ -111,7 +113,7 @@ export interface FormFillStepResult {
   fieldId: string;
   beforeValue: string | number | boolean;
   plannedValue?: string | number | boolean | string[];
-  appliedValue?: string | number | boolean;
+  appliedValue?: string | number | boolean | string[];
   status: FormFillStepStatus;
   error?: string;
   skippedReason?: string;
@@ -136,7 +138,7 @@ export interface FormFillTemplateFieldRule {
   labelPattern: string;
   fieldName?: string;
   kind?: FormFieldKind;
-  value: string | number | boolean;
+  value: string | number | boolean | string[];
   action?: FormFillAction;
 }
 
@@ -159,7 +161,7 @@ export interface FormFillHistoryField {
   label: string;
   name?: string;
   kind: FormFieldKind;
-  value: string | number | boolean;
+  value: string | number | boolean | string[];
   action?: FormFillAction;
 }
 

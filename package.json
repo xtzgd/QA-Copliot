@@ -1,6 +1,6 @@
 {
   "name": "qa-copilot",
-  "version": "1.0.9",
+  "version": "1.1.0",
   "description": "QA Copilot Chrome Extension - Web QA Testing Assistant",
   "private": true,
   "type": "module",
